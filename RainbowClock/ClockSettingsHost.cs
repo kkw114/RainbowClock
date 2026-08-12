@@ -7,6 +7,7 @@ using HMUI;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using System.Linq;
 
 namespace RainbowClock
 {
@@ -19,9 +20,15 @@ namespace RainbowClock
     {
         private readonly List<(TextMeshProUGUI label, string enKey)> _labels = new List<(TextMeshProUGUI, string)>();
         private bool _localized;
-        private bool _rowsFixed;
+        private bool _timeZoneCustomized;
         private VerticalLayoutGroup _lastRowsLayout;
         private BatteryError _lastBatteryErrorShown = BatteryError.None;
+        private string _lastButtonSerial = "\0";
+
+        // 多入口页面（Mods 列表 + 主菜单按钮）各自独立初始化滚动
+        private RectTransform _lastScrollClip;
+        private readonly HashSet<RectTransform> _pendingScrolls = new HashSet<RectTransform>();
+        private readonly HashSet<RectTransform> _scrollDone = new HashSet<RectTransform>();
 
         private ClockConfig Config => Plugin.Config;
 
@@ -143,13 +150,20 @@ namespace RainbowClock
             set => Config.SetColor(value);
         }
 
+        [UIValue("FpsColorValue")]
+        public Color FpsColorValue
+        {
+            get => Config.GetFpsColor();
+            set => Config.SetFpsColor(value);
+        }
+
         // ==================== 下拉选项与格式化 ====================
 
         [UIValue("ClockTypeOptions")]
-        public int[] ClockTypeOptions => new[] { 0, 1 };
+        public int[] ClockTypeOptions => new[] { 0, 1, 5 };
 
         [UIValue("ClockTwoTypeOptions")]
-        public int[] ClockTwoTypeOptions => new[] { 4, 0, 1 };
+        public int[] ClockTwoTypeOptions => new[] { 4, 0, 1, 5 };
 
         [UIValue("LanguageOptions")]
         public int[] LanguageOptions => new[] { 0, 1, 2 };
@@ -247,6 +261,9 @@ namespace RainbowClock
         [UIComponent("ColorRow")]
         internal ColorSetting ClockColorRow;
 
+        [UIComponent("FpsColorRow")]
+        internal ColorSetting FpsColorRow;
+
         [UIComponent("SettingsRows")]
         internal VerticalLayoutGroup SettingsRowsLayout;
 
@@ -280,52 +297,110 @@ namespace RainbowClock
 
         // ==================== 由主协程驱动 ====================
 
-        /// <summary>每 0.25s 调用：解析完成后做本地化初始化、行高设置与手动滚动初始化。</summary>
+        /// <summary>每 0.25s 调用：按页面独立初始化滚动；当前页面做本地化等初始化。</summary>
         public void Tick()
         {
+            // 1) 滚动初始化：按 ScrollClip 实例独立处理。
+            // 设置页有两个入口（Mods 列表 + 主菜单按钮），各自解析一次并覆盖宿主字段；
+            // 未激活页面的布局高度为 0 会持续重试，绝不能因另一个页面初始化成功而中断。
+            if (ScrollClip != null)
+            {
+                if (!ReferenceEquals(ScrollClip, _lastScrollClip))
+                {
+                    if (_lastScrollClip != null && !_scrollDone.Contains(_lastScrollClip))
+                    {
+                        _pendingScrolls.Add(_lastScrollClip);
+                    }
+                    _lastScrollClip = ScrollClip;
+                    if (!_scrollDone.Contains(ScrollClip))
+                    {
+                        _pendingScrolls.Add(ScrollClip);
+                    }
+                }
+            }
+            foreach (RectTransform clip in _pendingScrolls.ToList())
+            {
+                if (TrySetupScroll(clip))
+                {
+                    _scrollDone.Add(clip);
+                    _pendingScrolls.Remove(clip);
+                }
+            }
+
+            // 2) 当前页面的本地化/时区定制/ADB 状态（字段绑定的是最近解析的页面）
             bool parsed = ClockTypeDropdown != null && SettingsRowsLayout != null;
             if (parsed)
             {
-                // 设置页有两个入口（Mods 列表 + 主菜单按钮），各自解析一次；
-                // 检测到新的解析结果时重新执行初始化
                 if (SettingsRowsLayout != _lastRowsLayout)
                 {
                     _lastRowsLayout = SettingsRowsLayout;
                     _localized = false;
-                    _rowsFixed = false;
+                    _timeZoneCustomized = false;
                 }
                 if (!_localized)
                 {
                     RefreshLanguage();
                 }
-                if (!_rowsFixed)
+                if (!_timeZoneCustomized && TimeZoneDropdown != null)
                 {
-                    FixRowHeights();
+                    _timeZoneCustomized = true;
+                    CustomizeTimeZoneDropdown();
                 }
-                // ADB 状态变化时刷新按钮文字（未连接/不可用提示）
-                if (AdbBattery.LastErrorType != _lastBatteryErrorShown)
+                // ADB 状态或目标设备变化时刷新按钮文字（连接状态/错误提示）
+                if (AdbBattery.LastErrorType != _lastBatteryErrorShown
+                    || AdbBattery.TargetSerial != _lastButtonSerial)
                 {
                     _lastBatteryErrorShown = AdbBattery.LastErrorType;
+                    _lastButtonSerial = AdbBattery.TargetSerial;
                     RefreshBatteryButtonText();
                 }
             }
         }
 
         /// <summary>
-        /// 为每个设置行设置 LayoutElement 高度（模板默认为 0），并把内容容器锚定到顶部、设固定高度，
-        /// 最后在裁剪容器上初始化手动摇杆滚动。
+        /// 独立初始化一个设置页面的滚动：行高回填、内容锚定、RectMask2D、SettingsScroller。
+        /// 不依赖宿主字段（多入口页面共享宿主），布局未完成时返回 false 由调用方下轮重试。
         /// </summary>
-        private void FixRowHeights()
+        private bool TrySetupScroll(RectTransform clip)
         {
-            if (SettingsRowsLayout == null)
-            {
-                return;
-            }
             try
             {
+                // clip 铺满父级（VC）
+                clip.anchorMin = Vector2.zero;
+                clip.anchorMax = Vector2.one;
+                clip.pivot = new Vector2(0.5f, 0.5f);
+                clip.anchoredPosition = Vector2.zero;
+                clip.sizeDelta = Vector2.zero;
+
+                if (clip.GetComponent<RectMask2D>() == null)
+                {
+                    clip.gameObject.AddComponent<RectMask2D>();
+                }
+
+                // 防御：禁用可能存在的布局组（<bg> 本身没有，双保险）
+                var layoutGroup = clip.GetComponent<VerticalLayoutGroup>();
+                if (layoutGroup != null)
+                {
+                    layoutGroup.enabled = false;
+                }
+                var hlayoutGroup = clip.GetComponent<HorizontalOrVerticalLayoutGroup>();
+                if (hlayoutGroup != null && hlayoutGroup != layoutGroup)
+                {
+                    hlayoutGroup.enabled = false;
+                }
+
+                // 内容容器 = clip 的第一个子物体（SettingsRows）
+                var page = clip.GetChild(0) as RectTransform;
+                var pageLayout = page != null ? page.GetComponent<VerticalLayoutGroup>() : null;
+                if (page == null || pageLayout == null)
+                {
+                    return false;
+                }
+
+                // 行高回填（模板 LayoutElement 高度为 0）
                 float total = 0f;
                 int count = 0;
-                foreach (Transform child in SettingsRowsLayout.transform)
+                foreach (Transform child in page)
                 {
                     var layoutElement = child.GetComponent<LayoutElement>();
                     if (layoutElement == null)
@@ -347,58 +422,37 @@ namespace RainbowClock
                 }
                 if (count > 1)
                 {
-                    total += SettingsRowsLayout.spacing * (count - 1);
+                    total += pageLayout.spacing * (count - 1);
                 }
 
-                // 内容容器：顶部锚定 + 固定高度
-                var contentRect = SettingsRowsLayout.transform as RectTransform;
-                contentRect.anchorMin = new Vector2(0f, 1f);
-                contentRect.anchorMax = new Vector2(1f, 1f);
-                contentRect.pivot = new Vector2(0.5f, 1f);
-                contentRect.anchoredPosition = Vector2.zero;
-                contentRect.sizeDelta = new Vector2(0f, total);
+                // 内容锚定到顶部 + 固定高度
+                page.anchorMin = new Vector2(0f, 1f);
+                page.anchorMax = new Vector2(1f, 1f);
+                page.pivot = new Vector2(0.5f, 1f);
+                page.anchoredPosition = Vector2.zero;
+                page.sizeDelta = new Vector2(0f, total);
 
-                SetupManualScroll(total);
-                CustomizeTimeZoneDropdown();
-            }
-            catch (Exception e)
-            {
-                Plugin.Log?.Error("[RainbowClock] FixRowHeights: " + e);
-            }
-        }
-
-        /// <summary>在裁剪容器上挂 SettingsScroller，启用摇杆滚动（行级可见性管理代替 RectMask2D 裁剪）。</summary>
-        private void SetupManualScroll(float contentHeight)
-        {
-            try
-            {
-                if (ScrollClip == null)
-                {
-                    return;
-                }
-                // 不用 RectMask2D：其裁剪边缘在阻尼滚动时会产生闪烁；
-                // 由 SettingsScroller 做行级可见性（完整进入裁剪区才显示）
-
-                float clipHeight = ScrollClip.rect.height;
+                // 布局未完成时下轮重试
+                float clipHeight = clip.rect.height;
                 if (clipHeight <= 1f)
                 {
-                    // 布局尚未完成，下一轮重试
-                    _rowsFixed = false;
-                    return;
+                    Plugin.Log?.Info($"[RainbowClock] scroll setup retry: clipHeight={clipHeight:F1}");
+                    return false;
                 }
 
-                var scroller = ScrollClip.GetComponent<SettingsScroller>();
+                var scroller = clip.GetComponent<SettingsScroller>();
                 if (scroller == null)
                 {
-                    scroller = ScrollClip.gameObject.AddComponent<SettingsScroller>();
+                    scroller = clip.gameObject.AddComponent<SettingsScroller>();
                 }
-                scroller.Setup(SettingsRowsLayout.transform as RectTransform, ScrollClip, contentHeight - clipHeight, clipHeight);
-                _rowsFixed = true;
-                Plugin.Log?.Info($"[RainbowClock] manual scroll ready: content={contentHeight:F1} clip={clipHeight:F1} scrollable={contentHeight - clipHeight:F1}");
+                scroller.Setup(page, total - clipHeight);
+                Plugin.Log?.Info($"[RainbowClock] scroll ready: content={total:F1} clip={clipHeight:F1} scrollable={total - clipHeight:F1}");
+                return true;
             }
             catch (Exception e)
             {
-                Plugin.Log?.Error("[RainbowClock] SetupManualScroll: " + e);
+                Plugin.Log?.Error("[RainbowClock] TrySetupScroll: " + e);
+                return false;
             }
         }
 
@@ -515,6 +569,10 @@ namespace RainbowClock
             {
                 Add(ClockColorRow.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>(), "clock_color");
             }
+            if (FpsColorRow != null)
+            {
+                Add(FpsColorRow.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>(), "fps_color");
+            }
         }
 
         private static TextMeshProUGUI FindLabel(Component setting)
@@ -544,15 +602,37 @@ namespace RainbowClock
                 return;
             }
             string battText = Loc.T("btn_refresh_battery");
-            switch (AdbBattery.LastErrorType)
+
+            // 连接状态放入括号：有线只显示"有线"，无线显示"无线 + IP 最后三位"
+            string serial = AdbBattery.TargetSerial;
+            if (!string.IsNullOrEmpty(serial))
             {
-                case BatteryError.NoDevice:
-                    battText += " (" + Loc.T("batt_no_device") + ")";
-                    break;
-                case BatteryError.Unavailable:
-                    battText += " (" + Loc.T("batt_not_available") + ")";
-                    break;
+                string suffix;
+                if (serial.Contains(":"))
+                {
+                    string ip = serial.Split(':')[0];
+                    int dot = ip.LastIndexOf('.');
+                    string last = dot >= 0 && dot < ip.Length - 1 ? ip.Substring(dot + 1) : ip;
+                    suffix = Loc.T("conn_wireless") + " " + last;
+                }
+                else
+                {
+                    suffix = Loc.T("conn_wired");
+                }
+                battText += " (" + suffix + ")";
             }
+            else if (AdbBattery.LastErrorType != BatteryError.None)
+            {
+                string err = AdbBattery.LastErrorType == BatteryError.NoDevice
+                    ? Loc.T("batt_no_device")
+                    : Loc.T("batt_not_available");
+                battText += " (" + err + ")";
+            }
+            else
+            {
+                battText += " (" + Loc.T("conn_not_connected") + ")";
+            }
+
             BeatSaberUI.SetButtonText(RefreshBatteryButton, battText);
         }
     }

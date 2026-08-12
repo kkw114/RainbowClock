@@ -221,20 +221,16 @@ namespace RainbowClock
             }
             else
             {
-                text = BuildText();
+                // 主时钟段（FPS 段内部自着色，其余段按彩虹处理）
+                text = BuildMainSegment();
 
                 if (Plugin.Config.ClockTwoEnabled)
                 {
-                    string two = BuildClockTwoText();
+                    string two = BuildClockTwoSegment();
                     if (!string.IsNullOrEmpty(two))
                     {
                         text += " - " + two;
                     }
-                }
-
-                if (Plugin.Config.RainbowClock)
-                {
-                    text = RainbowText.Apply(text);
                 }
 
                 if (Plugin.Config.ShowBattery && AdbBattery.Available)
@@ -291,11 +287,108 @@ namespace RainbowClock
             }
         }
 
+        /// <summary>主时钟段：FPS 模式返回自着色文本，其他类型按彩虹处理。</summary>
+        private string BuildMainSegment()
+        {
+            if (Plugin.Config.ClockType == 5)
+            {
+                return GetFpsDisplayText();
+            }
+            string text = BuildText();
+            if (Plugin.Config.RainbowClock)
+            {
+                text = RainbowText.Apply(text);
+            }
+            return text;
+        }
+
+        /// <summary>时钟二段：FPS 模式返回自着色文本，其他类型按彩虹处理。</summary>
+        private string BuildClockTwoSegment()
+        {
+            if (Plugin.Config.ClockTwoType == 5)
+            {
+                return GetFpsDisplayText();
+            }
+            string text = BuildClockTwoText();
+            if (Plugin.Config.RainbowClock)
+            {
+                text = RainbowText.Apply(text);
+            }
+            return text;
+        }
+
+        /// <summary>
+        /// FPS 显示：数字按上限梯度着色（不受彩虹/自定义色影响）；
+        /// "FPS" 字样：彩虹开启时逐字符彩虹，关闭时使用自定义 FPS 颜色。
+        /// </summary>
+        private static string GetFpsDisplayText()
+        {
+            int fps = FpsTracker.CurrentFps;
+            int target = FpsTracker.GetTargetFps();
+            string digitColor = GetFpsGradientColor(fps, target);
+
+            string prefix = "FPS";
+            if (Plugin.Config.RainbowClock)
+            {
+                prefix = RainbowText.Apply(prefix);
+            }
+            else
+            {
+                prefix = "<color=#" + Plugin.Config.GetFpsColorHex() + ">" + prefix + "</color>";
+            }
+
+            return prefix + " <color=#" + digitColor + ">" + fps + "</color>";
+        }
+
+        /// <summary>
+        /// FPS 数字梯度色：≥上限绿色；低于上限一定帧数红色；中间黄色。
+        /// 规则：上限≤60 → 低于 5 帧红；60&lt;上限≤90 → 低于 10 帧红；
+        /// 90&lt;上限≤120 → 低于 20 帧红；上限&gt;120 → 低于 30 帧红。
+        /// </summary>
+        private static string GetFpsGradientColor(int fps, int target)
+        {
+            int redThreshold;
+            if (target <= 0)
+            {
+                redThreshold = 100;
+            }
+            else if (target <= 60)
+            {
+                redThreshold = target - 5;
+            }
+            else if (target <= 90)
+            {
+                redThreshold = target - 10;
+            }
+            else if (target <= 120)
+            {
+                redThreshold = target - 20;
+            }
+            else
+            {
+                redThreshold = target - 30;
+            }
+
+            if (fps >= target)
+            {
+                return "00FF00";
+            }
+            if (fps >= redThreshold)
+            {
+                return "FFFF00";
+            }
+            return "FF0000";
+        }
+
         private string BuildText()
         {
             if (Plugin.Config.ClockType == 1)
             {
                 return GetStopwatchString((DateTime.UtcNow - _sessionStart).TotalSeconds);
+            }
+            if (Plugin.Config.ClockType == 5)
+            {
+                return "FPS " + FpsTracker.CurrentFps;
             }
             return GetTimeString();
         }
@@ -344,7 +437,7 @@ namespace RainbowClock
             return "HH:mm";
         }
 
-        /// <summary>时钟二内容：0=当前时间 1=本次游玩 4=UTC时间。</summary>
+        /// <summary>时钟二内容：0=当前时间 1=本次游玩 4=UTC时间 5=FPS。</summary>
         private string BuildClockTwoText()
         {
             switch (Plugin.Config.ClockTwoType)
@@ -353,6 +446,8 @@ namespace RainbowClock
                     return GetNowInConfigZone().ToString(GetTimeFormat());
                 case 1:
                     return GetStopwatchString((DateTime.UtcNow - _sessionStart).TotalSeconds);
+                case 5:
+                    return "FPS " + FpsTracker.CurrentFps;
                 default:
                     return DateTime.UtcNow.ToString(GetTimeFormat());
             }

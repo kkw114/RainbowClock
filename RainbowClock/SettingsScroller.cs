@@ -1,6 +1,4 @@
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 using UnityEngine.XR;
 
 namespace RainbowClock
@@ -8,19 +6,14 @@ namespace RainbowClock
     /// <summary>
     /// 手动实现的设置页滚动：读取手柄摇杆（+桌面滚轮）驱动"目标位置"，
     /// 再以指数阻尼缓动跟随——按住摇杆平滑连续滚动，松开逐渐停住，类似阅读文档。
-    /// 同时做行级可见性管理：用 CanvasGroup 隐藏裁剪区域外的设置行（保留布局占位），
-    /// 彻底避免滚动出屏的内容残留叠加。
+    /// 内容裁剪由 RectMask2D 负责（GPU 级，无每帧 alpha 操作，避免闪烁/震动）。
     /// </summary>
     public class SettingsScroller : MonoBehaviour
     {
         private RectTransform _content;
-        private RectTransform _clip;
         private float _scrollable;
-        private float _clipHeight;
         private float _current;
         private float _target;
-        private readonly List<RectTransform> _rows = new List<RectTransform>();
-        private readonly List<CanvasGroup> _rowGroups = new List<CanvasGroup>();
 
         private float _stickSpeed = 300f;
         private float _wheelStep = 80f;
@@ -28,33 +21,12 @@ namespace RainbowClock
 
         private static readonly InputDevice[] DeviceCache = new InputDevice[2];
 
-        public void Setup(RectTransform content, RectTransform clip, float scrollable, float clipHeight)
+        public void Setup(RectTransform content, float scrollable)
         {
             _content = content;
-            _clip = clip;
             _scrollable = Mathf.Max(0f, scrollable);
-            _clipHeight = clipHeight;
             _current = 0f;
             _target = 0f;
-
-            _rows.Clear();
-            _rowGroups.Clear();
-            if (content != null)
-            {
-                foreach (Transform child in content)
-                {
-                    if (child is RectTransform rt)
-                    {
-                        _rows.Add(rt);
-                        var group = rt.GetComponent<CanvasGroup>();
-                        if (group == null)
-                        {
-                            group = rt.gameObject.AddComponent<CanvasGroup>();
-                        }
-                        _rowGroups.Add(group);
-                    }
-                }
-            }
         }
 
         private void Update()
@@ -92,53 +64,6 @@ namespace RainbowClock
             Vector2 pos = _content.anchoredPosition;
             pos.y = _current;
             _content.anchoredPosition = pos;
-
-            UpdateRowVisibility();
-        }
-
-        /// <summary>
-        /// 行级可见性：用 CanvasGroup 隐藏裁剪区域外的设置行（保留布局占位）。
-        /// 行必须完整进入裁剪区才显示（世界坐标判断，与锚定/pivot 无关）；
-        /// 边缘半露的行保持隐藏，避免被部分裁剪造成闪烁。
-        /// </summary>
-        private void UpdateRowVisibility()
-        {
-            int count = _rows.Count;
-            if (count == 0 || count != _rowGroups.Count || _clip == null)
-            {
-                return;
-            }
-            float half = _clipHeight * 0.5f;
-            for (int i = 0; i < count; i++)
-            {
-                RectTransform row = _rows[i];
-                CanvasGroup group = _rowGroups[i];
-                if (row == null || group == null)
-                {
-                    continue;
-                }
-                float height = row.rect.height;
-                if (height < 9f)
-                {
-                    height = 9f;
-                }
-                // 行顶/行底世界坐标 → 裁剪区局部坐标
-                Vector3 topLocal = _clip.InverseTransformPoint(row.TransformPoint(new Vector3(0f, height * 0.5f, 0f)));
-                Vector3 bottomLocal = _clip.InverseTransformPoint(row.TransformPoint(new Vector3(0f, -height * 0.5f, 0f)));
-                bool visible = topLocal.y <= half && bottomLocal.y >= -half;
-                if (visible && group.alpha < 1f)
-                {
-                    group.alpha = 1f;
-                    group.blocksRaycasts = true;
-                    group.interactable = true;
-                }
-                else if (!visible && group.alpha > 0f)
-                {
-                    group.alpha = 0f;
-                    group.blocksRaycasts = false;
-                    group.interactable = false;
-                }
-            }
         }
 
         private static Vector2 GetStickAxis()

@@ -81,6 +81,10 @@
       <HintPath>$(GameDir)\Beat Saber_Data\Managed\UnityEngine.XRModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="UnityEngine.SubsystemsModule">
+      <HintPath>$(GameDir)\Beat Saber_Data\Managed\UnityEngine.SubsystemsModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="UnityEngine.InputLegacyModule">
       <HintPath>$(GameDir)\Beat Saber_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>False</Private>

@@ -40,6 +40,7 @@ namespace RainbowClock
             En["rainbow"] = "Rainbowify it";              Zh["rainbow"] = "彩虹效果";
             En["font_size"] = "Font Size";                Zh["font_size"] = "字号";
             En["clock_color"] = "Clock Color";            Zh["clock_color"] = "时钟颜色";
+            En["fps_color"] = "FPS Color";                Zh["fps_color"] = "FPS 颜色";
             En["clock_two"] = "Clock 2";                  Zh["clock_two"] = "时钟二";
             En["clock_two_type"] = "Clock 2 Content";     Zh["clock_two_type"] = "时钟二内容";
             En["pos_x"] = "Position X (Left/Right)";      Zh["pos_x"] = "位置 X（左/右）";
@@ -50,6 +51,7 @@ namespace RainbowClock
             En["type_current"] = "Current Time";          Zh["type_current"] = "当前时间";
             En["type_session"] = "Session Time";          Zh["type_session"] = "本次游玩";
             En["type_utc"] = "UTC Time";                  Zh["type_utc"] = "UTC 时间";
+            En["type_fps"] = "FPS";                       Zh["type_fps"] = "FPS（帧率）";
 
             // ============ 语言选项 ============
             En["lang_auto"] = "Auto (Follow Game)";       Zh["lang_auto"] = "自动 (跟随游戏)";
@@ -63,6 +65,9 @@ namespace RainbowClock
             En["new_year"] = "Happy New Year!";           Zh["new_year"] = "新年快乐！";
             En["batt_not_available"] = "ADB unavailable"; Zh["batt_not_available"] = "ADB 不可用";
             En["batt_no_device"] = "No ADB device";       Zh["batt_no_device"] = "未检测到 ADB 设备";
+            En["conn_wired"] = "USB";                     Zh["conn_wired"] = "有线";
+            En["conn_wireless"] = "WiFi";                 Zh["conn_wireless"] = "无线";
+            En["conn_not_connected"] = "Not connected";   Zh["conn_not_connected"] = "未连接";
 
             // 愚人节失败嘲讽（4 月 1 日）
             En["fail1"] = "Get Better";                   Zh["fail1"] = "菜就多练";
@@ -145,6 +150,7 @@ namespace RainbowClock
             {
                 1 => T("type_session"),
                 4 => T("type_utc"),
+                5 => T("type_fps"),
                 _ => T("type_current")
             };
         }

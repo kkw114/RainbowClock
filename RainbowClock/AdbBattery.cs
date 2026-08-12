@@ -119,6 +119,9 @@ namespace RainbowClock
         /// </summary>
         private static void QueryBattery()
         {
+            // 解析目标设备：配置序列号优先，否则自动选择（有线 USB 优先，其次无线 WiFi）
+            ResolveDevice();
+
             // 通道 1：adb cmd battery
             bool noDevice;
             string levelOut = RunAdbShell("cmd battery get level", out noDevice);
@@ -190,6 +193,12 @@ namespace RainbowClock
                 _available = true;
                 _lastErrorType = BatteryError.None;
             }
+            // 记忆查询成功的设备（多设备选择时优先）
+            if (!string.IsNullOrEmpty(_targetSerial) && Plugin.Config.LastAdbSerial != _targetSerial)
+            {
+                Plugin.Config.LastAdbSerial = _targetSerial;
+            }
+            Plugin.Log?.Info($"[RainbowClock] battery: serial={_targetSerial} level={level} status={status} charging={status == 2 || status == 5}");
         }
 
         private static void SetError(BatteryError error)
@@ -203,7 +212,131 @@ namespace RainbowClock
             }
         }
 
+        private static string _targetSerial = "";
+
+        /// <summary>当前查询目标设备序列号（空表示无可用设备）。</summary>
+        public static string TargetSerial
+        {
+            get { lock (Lock) { return _targetSerial; } }
+        }
+
+        /// <summary>
+        /// 解析目标设备（优先级）：
+        /// 1. 配置的 AdbSerial（手动指定）
+        /// 2. 有线（USB）在线设备
+        /// 3. 上次查询成功的设备（自动记忆，在线则优先）
+        /// 4. 无线 VR 头显（model 含 Quest/Pico/Vive/Index）
+        /// 5. 无线其他设备（列表顺序）
+        /// </summary>
+        private static void ResolveDevice()
+        {
+            string configured = Plugin.Config.AdbSerial?.Trim() ?? "";
+            if (!string.IsNullOrEmpty(configured))
+            {
+                _targetSerial = configured;
+                return;
+            }
+
+            _targetSerial = "";
+            string remembered = Plugin.Config.LastAdbSerial?.Trim() ?? "";
+            string wired = "";
+            string wirelessVr = "";
+            string wirelessAny = "";
+            bool rememberedOnline = false;
+
+            try
+            {
+                string output = RunAdbProcess("devices -l", out bool noDevice);
+                if (noDevice || output == null)
+                {
+                    Plugin.Log?.Warn($"[RainbowClock] ResolveDevice: noDevice={noDevice} output=null");
+                    return;
+                }
+                Plugin.Log?.Info($"[RainbowClock] ResolveDevice output: [{output.Trim()}]");
+                foreach (string rawLine in output.Split('\n'))
+                {
+                    string line = rawLine.Trim();
+                    if (line.Length == 0 || line.StartsWith("List of devices", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    // adb devices -l 在 Windows 上用空格对齐列（非 tab），兼容两者
+                    string[] parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length < 2 || parts[1] != "device")
+                    {
+                        continue;
+                    }
+                    string address = parts[0].Trim();
+                    bool isVr = IsVrModel(line);
+
+                    if (address == remembered)
+                    {
+                        rememberedOnline = true;
+                    }
+
+                    if (!address.Contains(":"))
+                    {
+                        if (wired.Length == 0)
+                        {
+                            wired = address;
+                        }
+                    }
+                    else
+                    {
+                        if (isVr && wirelessVr.Length == 0)
+                        {
+                            wirelessVr = address;
+                        }
+                        if (wirelessAny.Length == 0)
+                        {
+                            wirelessAny = address;
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log?.Error("[RainbowClock] ResolveDevice: " + e.Message);
+            }
+
+            if (wired.Length > 0)
+            {
+                _targetSerial = wired;
+            }
+            else if (rememberedOnline)
+            {
+                _targetSerial = remembered;
+            }
+            else if (wirelessVr.Length > 0)
+            {
+                _targetSerial = wirelessVr;
+            }
+            else if (wirelessAny.Length > 0)
+            {
+                _targetSerial = wirelessAny;
+            }
+        }
+
+        /// <summary>从 adb devices -l 输出行解析 model 字段并判断是否为 VR 头显。</summary>
+        private static bool IsVrModel(string deviceLine)
+        {
+            int idx = deviceLine.IndexOf("model:", StringComparison.Ordinal);
+            if (idx < 0)
+            {
+                return false;
+            }
+            int start = idx + 6;
+            int end = deviceLine.IndexOf(' ', start);
+            string model = (end < 0 ? deviceLine.Substring(start) : deviceLine.Substring(start, end - start)).ToLowerInvariant();
+            return model.Contains("quest") || model.Contains("pico") || model.Contains("vive") || model.Contains("index");
+        }
+
         private static string RunAdbShell(string shellCommand, out bool noDevice)
+        {
+            return RunAdbProcess("shell " + shellCommand, out noDevice);
+        }
+
+        private static string RunAdbProcess(string args, out bool noDevice)
         {
             noDevice = false;
             string adb = Plugin.Config.AdbPath;
@@ -212,9 +345,14 @@ namespace RainbowClock
                 adb = "adb";
             }
             string serial = Plugin.Config.AdbSerial?.Trim() ?? "";
-            string args = string.IsNullOrEmpty(serial)
-                ? "shell " + shellCommand
-                : "-s " + serial + " shell " + shellCommand;
+            if (string.IsNullOrEmpty(serial))
+            {
+                serial = _targetSerial;
+            }
+            if (!string.IsNullOrEmpty(serial))
+            {
+                args = "-s " + serial + " " + args;
+            }
 
             var psi = new ProcessStartInfo
             {
@@ -251,7 +389,7 @@ namespace RainbowClock
                 if (!proc.WaitForExit(8000))
                 {
                     try { proc.Kill(); } catch { }
-                    Plugin.Log?.Error("[RainbowClock] adb timed out: " + shellCommand);
+                    Plugin.Log?.Error("[RainbowClock] adb timed out: " + args);
                     return null;
                 }
                 if (proc.ExitCode != 0)
@@ -265,15 +403,10 @@ namespace RainbowClock
             }
         }
 
-        /// <summary>按 Quest 版逻辑格式化电量：充电/满电青色，否则按电量渐变红→黄→绿。</summary>
+        /// <summary>按 Quest 版逻辑格式化电量：一律按电量渐变红→黄→绿（每 20% 均匀分布），不区分充电状态。</summary>
         private static string FormatBattery(int level, bool charging)
         {
             string percent = level + "%";
-            if (charging)
-            {
-                return "<color=#00FFFF>" + percent + "</color>";
-            }
-
             float t = level / 100f;
             UnityEngine.Color color = EvaluateGradient(t);
             return "<color=#" + UnityEngine.ColorUtility.ToHtmlStringRGB(color) + ">" + percent + "</color>";
@@ -281,11 +414,12 @@ namespace RainbowClock
 
         private static readonly (float r, float g, float b, float pos)[] GradientKeys =
         {
-            (1f, 0f, 0f, 0.00f),       // 红
-            (1f, 0.53f, 0f, 0.35f),    // 橙
-            (1f, 0.84f, 0f, 0.50f),    // 黄
-            (0.6f, 0.8f, 0.14f, 0.75f),// 黄绿
-            (0f, 1f, 0f, 1.00f)        // 绿
+            (1f, 0f, 0f, 0.00f),        // 红
+            (1f, 0.30f, 0f, 0.20f),     // 橙红
+            (1f, 0.53f, 0f, 0.40f),     // 橙
+            (1f, 0.84f, 0f, 0.60f),     // 黄
+            (0.6f, 0.8f, 0.14f, 0.80f), // 黄绿
+            (0f, 1f, 0f, 1.00f)         // 绿
         };
 
         private static UnityEngine.Color EvaluateGradient(float t)

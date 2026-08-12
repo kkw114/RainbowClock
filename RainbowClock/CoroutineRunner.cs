@@ -21,6 +21,12 @@ namespace RainbowClock
             }
         }
 
+        private void Update()
+        {
+            // 每帧驱动 FPS 统计
+            FpsTracker.Tick();
+        }
+
         public static Coroutine StartRoutine(IEnumerator routine)
         {
             return Instance.StartCoroutine(routine);

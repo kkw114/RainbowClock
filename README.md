@@ -8,11 +8,13 @@ A bilingual (Chinese/English) clock mod for Beat Saber 1.40.8 (PC).
 
 - Clock display: current time / session time, with 12/24-hour and seconds toggles
 - Clock 2: an extra clock between the main clock and battery (UTC time / current time / session time)
+- FPS display (main clock & clock 2): digits gradient-colored by refresh-rate cap, custom FPS label color
 - Time zone: any system time zone, defaults to the PC's
 - Rainbow effect: per-character colors
 - Clock color, font size, position (custom X/Y/Z offset)
 - Show-during-song toggle; respects the "No Text and HUDs" player setting
-- Headset battery (ADB) with cyan color while charging/full; hidden when unavailable
+- Headset battery (ADB), gradient-colored by level; hidden when unavailable
+- Automatic ADB device selection: wired USB first, then last successful device, then wireless VR headsets (skips phones)
 - Bilingual UI (follows the game language automatically, manual switch available)
 
 ## Installation

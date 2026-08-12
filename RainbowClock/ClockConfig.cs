@@ -30,7 +30,7 @@ namespace RainbowClock
         /// <summary>时钟二（显示在主时钟与电量之间）</summary>
         public virtual bool ClockTwoEnabled { get; set; } = false;
 
-        /// <summary>时钟二内容：0=当前时间 1=本次游玩 4=UTC时间</summary>
+        /// <summary>时钟二内容：0=当前时间 1=本次游玩 4=UTC时间 5=FPS</summary>
         public virtual int ClockTwoType { get; set; } = 4;
 
         public virtual float FontSize { get; set; } = 8f;
@@ -41,6 +41,9 @@ namespace RainbowClock
         public virtual float ClockZ { get; set; } = 0f;
 
         public virtual string ClockColor { get; set; } = "#FFFFFF";
+
+        /// <summary>FPS 字样的颜色（彩虹关闭时生效；FPS 数字始终按梯度着色）</summary>
+        public virtual string FpsColor { get; set; } = "#FFFFFF";
 
         /// <summary>语言模式：0=自动 1=English 2=中文</summary>
         public virtual int Language { get; set; } = 0;
@@ -53,6 +56,9 @@ namespace RainbowClock
 
         /// <summary>多设备时指定序列号，留空自动</summary>
         public virtual string AdbSerial { get; set; } = "";
+
+        /// <summary>上次查询成功的设备（自动记忆，多设备时优先使用）</summary>
+        public virtual string LastAdbSerial { get; set; } = "";
 
         /// <summary>电量自动刷新间隔（秒）</summary>
         public virtual int BatteryRefreshSeconds { get; set; } = 30;
@@ -69,6 +75,25 @@ namespace RainbowClock
         public void SetColor(Color color)
         {
             ClockColor = "#" + ColorUtility.ToHtmlStringRGB(color);
+        }
+
+        public Color GetFpsColor()
+        {
+            if (ColorUtility.TryParseHtmlString(FpsColor, out Color color))
+            {
+                return color;
+            }
+            return Color.white;
+        }
+
+        public string GetFpsColorHex()
+        {
+            return ColorUtility.ToHtmlStringRGB(GetFpsColor());
+        }
+
+        public void SetFpsColor(Color color)
+        {
+            FpsColor = "#" + ColorUtility.ToHtmlStringRGB(color);
         }
     }
 }
