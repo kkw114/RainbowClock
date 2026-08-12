@@ -1,0 +1,21 @@
+<vertical id="ScrollClip" child-expand-height="false" child-control-height="false">
+  <vertical id="SettingsRows" spacing="2" child-expand-height="false" child-control-height="false">
+    <dropdown-list-setting id="ClockType" text="Clock Type" value="ClockTypeValue" options="ClockTypeOptions" formatter="ClockTypeFormatter" on-change="OnClockTypeChanged" apply-on-change="true" />
+    <dropdown-list-setting id="TimeZone" text="Time Zone" value="TimeZoneValue" options="TimeZoneOptions" formatter="TimeZoneFormatter" apply-on-change="true" />
+    <dropdown-list-setting id="Lang" text="Language" value="LanguageValue" options="LanguageOptions" formatter="LanguageFormatter" on-change="OnLangChanged" apply-on-change="true" />
+    <toggle-setting id="TogClockTwo" text="Clock 2" value="ClockTwoValue" apply-on-change="true" />
+    <dropdown-list-setting id="ClockTwoType" text="Clock 2 Content" value="ClockTwoTypeValue" options="ClockTwoTypeOptions" formatter="ClockTypeFormatter" apply-on-change="true" />
+    <toggle-setting id="TogInSong" text="Show During Song" value="InSongValue" apply-on-change="true" />
+    <toggle-setting id="TogInReplay" text="Show During Replay" value="InReplayValue" apply-on-change="true" />
+    <toggle-setting id="TogTwelve" text="12/24 Hour Toggle" value="TwelveValue" apply-on-change="true" />
+    <toggle-setting id="TogSeconds" text="Show Seconds" value="SecondsValue" apply-on-change="true" />
+    <toggle-setting id="TogBattery" text="Show Headset Battery (ADB)" value="BatteryValue" apply-on-change="true" />
+    <toggle-setting id="TogRainbow" text="Rainbowify it" value="RainbowValue" apply-on-change="true" />
+    <increment-setting id="FontSize" text="Font Size" value="FontSizeValue" increment="0.5" min="1" max="20" apply-on-change="true" />
+    <color-setting id="ColorRow" text="Clock Color" value="ClockColorValue" apply-on-change="true" />
+    <increment-setting id="PosX" text="Position X (Left/Right)" value="PosXValue" increment="0.1" min="-10" max="10" apply-on-change="true" />
+    <increment-setting id="PosY" text="Position Y (Up/Down)" value="PosYValue" increment="0.1" min="-10" max="10" apply-on-change="true" />
+    <increment-setting id="PosZ" text="Position Z (Forward/Back)" value="PosZValue" increment="0.1" min="-10" max="10" apply-on-change="true" />
+    <button id="BtnRefreshBattery" text="Refresh Battery (ADB)" on-click="RefreshBattery" />
+  </vertical>
+</vertical>
