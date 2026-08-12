@@ -55,6 +55,7 @@ References the game directory (default `E:\SteamLibrary\steamapps\common\Beat Sa
 
 - Feature design referenced from [ClockMod (Quest)](https://github.com/EnderdracheLP/ClockMod)
 - PC implementation inspired by [SimpleClock](https://github.com/MadSquids/SimpleClock)
+- FPS feature referenced from [FPS-Counter](https://github.com/Loloppe/FPS-Counter)
 
 ## License
 

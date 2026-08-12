@@ -55,6 +55,7 @@ dotnet build -c Release
 
 - 功能参考 [ClockMod (Quest)](https://github.com/EnderdracheLP/ClockMod)
 - 参考 [SimpleClock](https://github.com/MadSquids/SimpleClock) 的 PC 实现
+- FPS 功能参考 [FPS-Counter](https://github.com/Loloppe/FPS-Counter)
 
 ## 许可证
 
