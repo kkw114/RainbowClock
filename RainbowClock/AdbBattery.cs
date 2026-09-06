@@ -1,5 +1,7 @@
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -21,13 +23,25 @@ namespace RainbowClock
     {
         private const long TicksPerSecond = 10_000_000L;
 
+        /// <summary>电量连续失败次数上限：达到后停止自动轮询并结束 adb。</summary>
+        private const int MaxBatteryRetries = 3;
+        /// <summary>失败后的重试间隔（秒）。</summary>
+        private const int BatteryRetryIntervalSeconds = 30;
+        /// <summary>进程启动后首次查询电量的延迟（秒）。</summary>
+        private const int BatteryStartDelaySeconds = 10;
+
         private static readonly object Lock = new object();
 
         private static int _level = -1;
         private static bool _charging;
         private static bool _available;
-        private static long _lastQueryTicks;
         private static bool _busy;
+        private static bool _shuttingDown;
+        private static long _sessionStartTicks = GetSessionStartTicks();
+        private static long _nextQueryTicks;
+        private static int _retryCount;
+        private static bool _automaticPollingEnabled = true;
+        private static string _resolvedAdb;
         private static BatteryError _lastErrorType = BatteryError.None;
 
         public static bool Available
@@ -56,30 +70,66 @@ namespace RainbowClock
             }
         }
 
-        /// <summary>主线程每帧/每 0.25s 调用：到时间自动刷新。</summary>
+        /// <summary>
+        /// 主线程每 0.25s 调用：到时间自动刷新。
+        /// 进程启动 10 秒后首次查询；失败时每 30 秒重试一次，
+        /// 连续失败 3 次后停止自动轮询并结束 adb 进程。
+        /// </summary>
         public static void Tick()
         {
-            int interval = Plugin.Config.BatteryRefreshSeconds;
-            if (interval < 10)
+            if (_shuttingDown)
             {
-                interval = 10;
+                return;
             }
-            if (DateTime.UtcNow.Ticks - _lastQueryTicks >= interval * TicksPerSecond)
+            if (!_automaticPollingEnabled)
+            {
+                return; // 已因连续失败而放弃，不再自动查询（可手动刷新恢复）
+            }
+            long now = DateTime.UtcNow.Ticks;
+            if (_nextQueryTicks == 0)
+            {
+                // 首次查询安排在进程启动 10 秒后
+                _nextQueryTicks = _sessionStartTicks + BatteryStartDelaySeconds * TicksPerSecond;
+            }
+            if (now >= _nextQueryTicks)
             {
                 RefreshNow();
             }
         }
 
-        /// <summary>立即异步刷新（设置页按钮 / 启动时调用）。</summary>
-        public static void RefreshNow()
+        /// <summary>立即异步刷新（设置页按钮 / 自动轮询）。手动调用时重新启用自动轮询并重置重试计数。</summary>
+        public static void RefreshNow(bool manual = false)
         {
+            if (_shuttingDown)
+            {
+                return;
+            }
+            if (manual)
+            {
+                lock (Lock)
+                {
+                    _automaticPollingEnabled = true;
+                    _retryCount = 0;
+                }
+            }
+            // 下次自动查询间隔：成功时按配置间隔，失败重试按固定 30 秒
+            long interval = (Available
+                ? Plugin.Config.BatteryRefreshSeconds
+                : BatteryRetryIntervalSeconds) * TicksPerSecond;
+            if (interval < 10 * TicksPerSecond)
+            {
+                interval = 10 * TicksPerSecond;
+            }
             lock (Lock)
             {
                 if (_busy)
                 {
+                    // 已有查询在跑：把下次自动查询顺延一个周期，避免自动轮询每 0.25s 空转
+                    _nextQueryTicks = DateTime.UtcNow.Ticks + interval;
                     return;
                 }
                 _busy = true;
+                _nextQueryTicks = DateTime.UtcNow.Ticks + interval;
             }
 
             Task.Run(() =>
@@ -95,7 +145,6 @@ namespace RainbowClock
                         _available = false;
                         _level = -1;
                         _lastErrorType = BatteryError.Unavailable;
-                        _lastQueryTicks = DateTime.UtcNow.Ticks;
                     }
                     Plugin.Log?.Error("[RainbowClock] ADB query exception: " + e.Message);
                 }
@@ -105,6 +154,33 @@ namespace RainbowClock
                     {
                         _busy = false;
                     }
+                }
+
+                // 查询结果统计：连续失败达到上限则停止自动轮询并结束 adb
+                bool ok;
+                bool exhaust = false;
+                lock (Lock)
+                {
+                    ok = _available;
+                    if (ok)
+                    {
+                        _retryCount = 0;
+                    }
+                    else
+                    {
+                        _retryCount++;
+                        if (_retryCount >= MaxBatteryRetries)
+                        {
+                            _automaticPollingEnabled = false;
+                            exhaust = true;
+                        }
+                    }
+                }
+                if (exhaust)
+                {
+                    Plugin.Log?.Warn($"[RainbowClock] battery unavailable after {MaxBatteryRetries} attempts; stopping ADB polling and killing adb processes.");
+                    RunAdbKillServer();
+                    KillSessionAdb();
                 }
             });
         }
@@ -187,7 +263,6 @@ namespace RainbowClock
         {
             lock (Lock)
             {
-                _lastQueryTicks = DateTime.UtcNow.Ticks;
                 _level = level;
                 _charging = status == 2 || status == 5;
                 _available = true;
@@ -205,7 +280,6 @@ namespace RainbowClock
         {
             lock (Lock)
             {
-                _lastQueryTicks = DateTime.UtcNow.Ticks;
                 _available = false;
                 _level = -1;
                 _lastErrorType = error;
@@ -339,11 +413,7 @@ namespace RainbowClock
         private static string RunAdbProcess(string args, out bool noDevice)
         {
             noDevice = false;
-            string adb = Plugin.Config.AdbPath;
-            if (string.IsNullOrWhiteSpace(adb))
-            {
-                adb = "adb";
-            }
+            string adb = ResolveAdbExecutable();
             string serial = Plugin.Config.AdbSerial?.Trim() ?? "";
             if (string.IsNullOrEmpty(serial))
             {
@@ -400,6 +470,179 @@ namespace RainbowClock
                     return null;
                 }
                 return stdout;
+            }
+        }
+
+        /// <summary>
+        /// 游戏退出时调用：结束由本模组拉起的 adb 进程（含常驻 adb server），
+        /// 防止 adb 子进程在游戏结束后继续存活，导致 Steam 依“进程树/作业对象”判定游戏仍在运行。
+        /// 仅在 <see cref="Plugin.Config.KillAdbOnExit"/> 开启时执行。
+        /// </summary>
+        public static void Shutdown()
+        {
+            if (!Plugin.Config.KillAdbOnExit)
+            {
+                return;
+            }
+            lock (Lock)
+            {
+                _shuttingDown = true;
+            }
+            Plugin.Log?.Info("[RainbowClock] shutdown: cleaning up adb processes...");
+
+            // 1) 优雅关闭 adb server
+            RunAdbKillServer();
+
+            // 2) 兜底清理：本次游戏会话期间启动的 adb 进程（含常驻 server 与残留客户端）
+            KillSessionAdb();
+        }
+
+        /// <summary>向 adb server 发送优雅关闭请求（kill-server 仅作用于本机 adb server）。</summary>
+        private static void RunAdbKillServer()
+        {
+            string adb = ResolveAdbExecutable();
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = adb,
+                    Arguments = "kill-server",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using (Process proc = Process.Start(psi))
+                {
+                    if (proc == null)
+                    {
+                        return;
+                    }
+                    if (!proc.WaitForExit(5000))
+                    {
+                        try { proc.Kill(); } catch { }
+                    }
+                }
+                Plugin.Log?.Info("[RainbowClock] shutdown: adb kill-server requested.");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log?.Warn("[RainbowClock] shutdown: adb kill-server failed: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// 兜底清理：结束本次游戏会话期间启动的 adb 进程（含常驻 server 与残留客户端）。
+        /// 按进程启动时间过滤，避免误杀其他工具在游戏启动前就常驻的 adb server。
+        /// </summary>
+        private static void KillSessionAdb()
+        {
+            DateTime gameStart;
+            try
+            {
+                gameStart = Process.GetCurrentProcess().StartTime;
+            }
+            catch
+            {
+                gameStart = DateTime.MinValue; // 拿不到启动时间则全量清理
+            }
+
+            Process[] adbProcs;
+            try
+            {
+                adbProcs = Process.GetProcessesByName("adb");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log?.Error("[RainbowClock] failed to enumerate adb processes: " + e.Message);
+                return;
+            }
+
+            int killed = 0;
+            foreach (Process p in adbProcs)
+            {
+                try
+                {
+                    if (gameStart != DateTime.MinValue && p.StartTime < gameStart)
+                    {
+                        continue; // 游戏启动前就存在的 adb，不属于本模组
+                    }
+                    p.Kill();
+                    p.WaitForExit(2000);
+                    killed++;
+                    Plugin.Log?.Info($"[RainbowClock] killed adb pid={p.Id} start={p.StartTime:HH:mm:ss}");
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log?.Warn("[RainbowClock] failed to kill adb pid=" + p.Id + ": " + e.Message);
+                }
+                finally
+                {
+                    p.Dispose();
+                }
+            }
+            Plugin.Log?.Info(killed > 0
+                ? $"[RainbowClock] killed {killed} leftover adb process(es)."
+                : "[RainbowClock] no leftover adb processes.");
+        }
+
+        /// <summary>
+        /// 解析 adb 可执行文件：显式配置的路径 &gt; 游戏目录内置（部署时安装到游戏根目录） &gt; PATH 中的 adb。
+        /// </summary>
+        private static string ResolveAdbExecutable()
+        {
+            if (_resolvedAdb != null)
+            {
+                return _resolvedAdb;
+            }
+            string adb;
+            string configured = Plugin.Config.AdbPath?.Trim() ?? "";
+            if (!string.IsNullOrEmpty(configured) && !string.Equals(configured, "adb", StringComparison.OrdinalIgnoreCase))
+            {
+                adb = configured;
+            }
+            else
+            {
+                string gameLocal = FindGameLocalAdb();
+                adb = !string.IsNullOrEmpty(gameLocal) ? gameLocal : "adb";
+            }
+            _resolvedAdb = adb;
+            Plugin.Log?.Info("[RainbowClock] using adb: " + adb);
+            return adb;
+        }
+
+        /// <summary>查找游戏根目录下内置的 adb.exe（Plugins 的上一级目录），部署时安装到那里。</summary>
+        private static string FindGameLocalAdb()
+        {
+            try
+            {
+                string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                if (string.IsNullOrEmpty(pluginDir))
+                {
+                    return null;
+                }
+                string gameRoot = Directory.GetParent(pluginDir)?.FullName;
+                if (string.IsNullOrEmpty(gameRoot))
+                {
+                    return null;
+                }
+                string candidate = Path.Combine(gameRoot, "adb.exe");
+                return File.Exists(candidate) ? candidate : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>游戏进程启动时间（UTC ticks），用于安排首次查询与判断 adb 是否为本会话所启动。</summary>
+        private static long GetSessionStartTicks()
+        {
+            try
+            {
+                return Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+            }
+            catch
+            {
+                return DateTime.UtcNow.Ticks;
             }
         }
 

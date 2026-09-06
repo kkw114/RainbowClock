@@ -63,6 +63,9 @@ namespace RainbowClock
         /// <summary>电量自动刷新间隔（秒）</summary>
         public virtual int BatteryRefreshSeconds { get; set; } = 30;
 
+        /// <summary>退出游戏时自动结束由本模组拉起的 adb 进程（防止 adb 残留导致 Steam 认为游戏未退出）</summary>
+        public virtual bool KillAdbOnExit { get; set; } = true;
+
         public Color GetColor()
         {
             if (ColorUtility.TryParseHtmlString(ClockColor, out Color color))

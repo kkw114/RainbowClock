@@ -51,6 +51,8 @@ namespace RainbowClock
         [OnExit]
         public void OnExit()
         {
+            // 结束本模组拉起的 adb 进程，避免残留导致 Steam 判定游戏仍在运行
+            AdbBattery.Shutdown();
             AprilFoolsPatch.Remove();
             Log.Info("RainbowClock (彩虹时钟) stopped.");
         }

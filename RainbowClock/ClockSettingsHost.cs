@@ -29,6 +29,9 @@ namespace RainbowClock
         private RectTransform _lastScrollClip;
         private readonly HashSet<RectTransform> _pendingScrolls = new HashSet<RectTransform>();
         private readonly HashSet<RectTransform> _scrollDone = new HashSet<RectTransform>();
+        /// <summary>滚动初始化重试上限（0.25s 调用一次，40 次约 10 秒），达到后放弃，避免无限重试刷日志。</summary>
+        private const int MaxScrollAttempts = 40;
+        private readonly Dictionary<RectTransform, int> _scrollAttempts = new Dictionary<RectTransform, int>();
 
         private ClockConfig Config => Plugin.Config;
 
@@ -92,6 +95,13 @@ namespace RainbowClock
         {
             get => Config.ShowBattery;
             set => Config.ShowBattery = value;
+        }
+
+        [UIValue("KillAdbOnExitValue")]
+        public bool KillAdbOnExitValue
+        {
+            get => Config.KillAdbOnExit;
+            set => Config.KillAdbOnExit = value;
         }
 
         [UIValue("RainbowValue")]
@@ -292,7 +302,7 @@ namespace RainbowClock
         [UIAction("RefreshBattery")]
         public void RefreshBattery()
         {
-            AdbBattery.RefreshNow();
+            AdbBattery.RefreshNow(true); // 手动刷新：重置重试计数并恢复自动轮询
         }
 
         // ==================== 由主协程驱动 ====================
@@ -320,10 +330,34 @@ namespace RainbowClock
             }
             foreach (RectTransform clip in _pendingScrolls.ToList())
             {
+                // 布局已被销毁（退出游戏/切换页面）时直接丢弃，避免对已销毁对象反复操作抛异常
+                if (clip == null)
+                {
+                    _pendingScrolls.Remove(clip);
+                    _scrollAttempts.Remove(clip);
+                    continue;
+                }
                 if (TrySetupScroll(clip))
                 {
                     _scrollDone.Add(clip);
                     _pendingScrolls.Remove(clip);
+                    _scrollAttempts.Remove(clip);
+                }
+                else
+                {
+                    int attempts = _scrollAttempts.TryGetValue(clip, out int a) ? a : 0;
+                    attempts++;
+                    if (attempts >= MaxScrollAttempts)
+                    {
+                        // 页面未激活/布局高度为 0，重试足够次数后放弃（下次解析会重新尝试）
+                        _pendingScrolls.Remove(clip);
+                        _scrollAttempts.Remove(clip);
+                        Plugin.Log?.Warn("[RainbowClock] giving up scroll setup for an inactive/hidden settings page after too many retries.");
+                    }
+                    else
+                    {
+                        _scrollAttempts[clip] = attempts;
+                    }
                 }
             }
 
@@ -363,6 +397,10 @@ namespace RainbowClock
         /// </summary>
         private bool TrySetupScroll(RectTransform clip)
         {
+            if (clip == null)
+            {
+                return true; // 已销毁：按“完成”处理，让调用方从待办列表中移除
+            }
             try
             {
                 // clip 铺满父级（VC）
@@ -432,11 +470,10 @@ namespace RainbowClock
                 page.anchoredPosition = Vector2.zero;
                 page.sizeDelta = new Vector2(0f, total);
 
-                // 布局未完成时下轮重试
+                // 布局未完成时下轮重试（重试次数由调用方限制，不再每帧刷日志）
                 float clipHeight = clip.rect.height;
                 if (clipHeight <= 1f)
                 {
-                    Plugin.Log?.Info($"[RainbowClock] scroll setup retry: clipHeight={clipHeight:F1}");
                     return false;
                 }
 

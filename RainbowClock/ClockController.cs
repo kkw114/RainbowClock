@@ -41,7 +41,7 @@ namespace RainbowClock
         {
             MakeClock();
             LoadStateOnce();
-            AdbBattery.RefreshNow();
+            // 电量查询由 AdbBattery.Tick 在进程启动 10 秒后自动发起，此处不再立即查询
             _coroutine = CoroutineRunner.Instance.StartCoroutine(UpdateLoop());
         }
 

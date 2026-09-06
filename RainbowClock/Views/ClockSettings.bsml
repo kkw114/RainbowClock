@@ -10,6 +10,7 @@
     <toggle-setting id="TogTwelve" text="12/24 Hour Toggle" value="TwelveValue" apply-on-change="true" />
     <toggle-setting id="TogSeconds" text="Show Seconds" value="SecondsValue" apply-on-change="true" />
     <toggle-setting id="TogBattery" text="Show Headset Battery (ADB)" value="BatteryValue" apply-on-change="true" />
+    <toggle-setting id="TogKillAdb" text="Kill ADB On Exit" value="KillAdbOnExitValue" apply-on-change="true" />
     <toggle-setting id="TogRainbow" text="Rainbowify it" value="RainbowValue" apply-on-change="true" />
     <increment-setting id="FontSize" text="Font Size" value="FontSizeValue" increment="0.5" min="1" max="20" apply-on-change="true" />
     <color-setting id="ColorRow" text="Clock Color" value="ClockColorValue" apply-on-change="true" />
