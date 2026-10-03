@@ -61,7 +61,7 @@
 
 配套脚本 [`scripts/Enable-Wireless-ADB.bat`](scripts/Enable-Wireless-ADB.bat)：插上 USB 线后双击运行，它会自动切到 TCP 模式并建立无线连接，之后即可拔线。
 
-脚本自己也会找 adb，顺序为 **游戏目录 → PATH → System32 → Android SDK**（与模组一致，因此游戏目录那一份 adb 可以两用）。
+脚本自己也会找 adb，顺序为 **PATH → System32 → Android SDK**（脚本原本的逻辑，未做改动）。
 
 启用成功后，模组即可读到电量。注意：
 

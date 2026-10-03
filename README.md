@@ -62,7 +62,7 @@ If none of the three exists, the log shows `adb start failed` and the battery sl
 
 Bundled helper: [`scripts/Enable-Wireless-ADB.bat`](scripts/Enable-Wireless-ADB.bat). With the headset plugged in over USB, run it — it switches adbd to TCP mode and establishes the wireless connection, after which you can unplug the cable.
 
-The script resolves adb itself in the order **game folder → PATH → System32 → Android SDK** (same as the mod, so a single copy in the game folder serves both).
+The script resolves adb itself in the order **PATH → System32 → Android SDK** (the script's original logic, left unchanged).
 
 Once connected, the mod can read the battery. Keep in mind:
 

@@ -18,8 +18,8 @@
 
 ### Added / 新增
 
-- **`scripts/Enable-Wireless-ADB.bat`**：一键为 USB 连接的头显开启无线 ADB（自动读取 Wi-Fi IP、`adb tcpip 5555`、`adb connect` 并验证）。脚本查找 adb 的顺序为**游戏目录 → PATH → System32 → Android SDK**，与模组一致，因此游戏根目录内置的那一份 adb 可供两者共用。
-  **`scripts/Enable-Wireless-ADB.bat`**: one-click wireless ADB for a USB-connected headset (reads the Wi-Fi IP, runs `adb tcpip 5555`, `adb connect`, then verifies). It resolves adb in the order **game folder → PATH → System32 → Android SDK**, matching the mod, so the copy bundled in the game root serves both.
+- **`scripts/Enable-Wireless-ADB.bat`**：一键为 USB 连接的头显开启无线 ADB（自动读取 Wi-Fi IP、`adb tcpip 5555`、`adb connect` 并验证）。**原样收录，未做改动**；脚本自身查找 adb 的顺序为 PATH → System32 → Android SDK。
+  **`scripts/Enable-Wireless-ADB.bat`**: one-click wireless ADB for a USB-connected headset (reads the Wi-Fi IP, runs `adb tcpip 5555`, `adb connect`, then verifies). Included **as-is, unmodified**; the script resolves adb in the order PATH → System32 → Android SDK.
 - 中英文 README 的「头显电量（ADB）配置」新增 **adb 安放位置**说明（三级查找顺序与推荐做法）、无线调试脚本用法与注意事项。
   The bilingual README ADB section now documents **where to put adb** (three-level lookup order and the recommended choice), plus usage notes for the wireless ADB script.
 

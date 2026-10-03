@@ -13,42 +13,15 @@ rem   4. adb connect IP:5555  -建立无线ADB会话
 rem   5. adb get-state 验证
 rem ============================================================
 
-rem ---- 查找 adb.exe ----------------------------------------
-rem  顺序：游戏目录内置  ->  PATH  ->  常见安装目录
-rem  游戏目录那一份由模组部署时安装（adb.exe 与两个 AdbWin*.dll 一起放在
-rem  游戏根目录，即 Plugins 的上一级），优先使用它可以让脚本与模组共用同一份 adb。
+rem ---- 查找 adb.exe（优先PATH，然后是常见安装目录）----
 set "ADB="
-set "ADB_GAME="
-rem 手动指定游戏目录（不确定就留空，下面的自动探测会处理）
-rem 例：set "ADB_GAME=E:\SteamLibrary\steamapps\common\Beat Saber"
-if not defined ADB_GAME (
-  for %%D in ("%ProgramFiles(x86)%\Steam" "%ProgramFiles%\Steam") do (
-    if not defined ADB_GAME if exist "%%~D\steamapps\common\Beat Saber\adb.exe" set "ADB_GAME=%%~D\steamapps\common\Beat Saber"
-  )
-)
-if not defined ADB_GAME (
-  for %%L in ("C" "D" "E" "F" "G" "H") do (
-    if not defined ADB_GAME if exist "%%~L:\SteamLibrary\steamapps\common\Beat Saber\adb.exe" set "ADB_GAME=%%~L:\SteamLibrary\steamapps\common\Beat Saber"
-  )
-)
-if not defined ADB_GAME (
-  for /f "tokens=2,*" %%A in ('reg query "HKCU\Software\Valve\Steam" /v SteamPath 2^>nul') do set "ADB_GAME=%%B"
-  if defined ADB_GAME if exist "!ADB_GAME!\steamapps\common\Beat Saber\adb.exe" (
-    set "ADB_GAME=!ADB_GAME!\steamapps\common\Beat Saber"
-  ) else (
-    set "ADB_GAME="
-  )
-)
-if defined ADB_GAME if exist "!ADB_GAME!\adb.exe" set "ADB=!ADB_GAME!\adb.exe"
-if not defined ADB adb version >nul 2>&1 && set "ADB=adb"
+adb version >nul 2>&1 && set "ADB=adb"
 if not defined ADB if exist "C:\Windows\system32\adb.exe" set "ADB=C:\Windows\system32\adb.exe"
 if not defined ADB if exist "%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe" set "ADB=%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
 if not defined ADB (
-  echo [错误] 未找到 adb.exe。已查找：游戏目录、PATH、System32、Android SDK。
-  echo        请任选其一：
-  echo          - 把 adb.exe 与 AdbWinApi.dll、AdbWinUsbApi.dll 放进游戏根目录
-  echo          - 把 adb 加入 PATH
-  echo          - 修改本脚本顶部的 ADB_GAME 为你的游戏目录
+  echo [错误] 未找到 adb.exe。
+  echo        请安装 Android platform-tools 并加入 PATH，
+  echo        或修改本脚本顶部的 ADB= 路径。
   pause
   exit /b 1
 )
