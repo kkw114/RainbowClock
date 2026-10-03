@@ -26,8 +26,10 @@ namespace RainbowClock
                     return;
                 }
                 _harmony = new Harmony("com.rainbowclock.aprilfools");
+                // 必须用实例调用 PatchAll：无参/无接收者的 PatchAll 会把补丁归属到一个
+                // 自动生成的 Harmony ID（由调用方程序集推导），随后 UnpatchSelf() 就摘不掉它们。
                 _harmony.PatchAll(Assembly.GetExecutingAssembly());
-                Plugin.Log?.Info("[RainbowClock] April fools patch installed.");
+                Plugin.Log?.Info("[RainbowClock] April fools patch installed (id=" + _harmony.Id + ").");
             }
             catch (Exception e)
             {

@@ -29,6 +29,17 @@ namespace RainbowClock
             _target = 0f;
         }
 
+        /// <summary>
+        /// 内容高度变化（如设置行显隐）后更新可滚动范围。
+        /// 保留当前位置并夹到新范围内，避免内容变短时停在越界位置。
+        /// </summary>
+        public void UpdateScrollable(float scrollable)
+        {
+            _scrollable = Mathf.Max(0f, scrollable);
+            _target = Mathf.Clamp(_target, 0f, _scrollable);
+            _current = Mathf.Clamp(_current, 0f, _scrollable);
+        }
+
         private void Update()
         {
             if (_content == null)
@@ -46,7 +57,17 @@ namespace RainbowClock
             _target += stickInput * Time.deltaTime * _stickSpeed;
 
             // 滚轮：每格跳一段目标
-            float wheel = Input.mouseScrollDelta.y;
+            // 注意：Input.mouseScrollDelta 在部分 Unity 配置（Input System 接管 legacy input）下会抛
+            // InvalidOperationException，必须兜住，否则设置页滚动会每帧报错。
+            float wheel = 0f;
+            try
+            {
+                wheel = Input.mouseScrollDelta.y;
+            }
+            catch (System.Exception)
+            {
+                wheel = 0f;
+            }
             if (Mathf.Abs(wheel) > 0.001f)
             {
                 _target += wheel * _wheelStep;

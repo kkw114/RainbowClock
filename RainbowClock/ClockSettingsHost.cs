@@ -15,13 +15,14 @@ namespace RainbowClock
     /// <summary>
     /// 设置页 BSML 绑定宿主。所有属性/动作被 Views/ClockSettings.bsml 引用。
     /// 语言切换时原地刷新所有标签文本。
+    /// 注意：宿主实例被两个入口（Mods 列表 + 主菜单按钮）共享，
+    /// 因此所有"当前页面"相关状态都必须按组件实例检测并重建，不能只初始化一次。
     /// </summary>
     public class ClockSettingsHost
     {
         private readonly List<(TextMeshProUGUI label, string enKey)> _labels = new List<(TextMeshProUGUI, string)>();
         private bool _localized;
-        private bool _timeZoneCustomized;
-        private VerticalLayoutGroup _lastRowsLayout;
+        private ColorSetting[] _lastColorRows;
         private BatteryError _lastBatteryErrorShown = BatteryError.None;
         private string _lastButtonSerial = "\0";
 
@@ -31,17 +32,80 @@ namespace RainbowClock
         private readonly HashSet<RectTransform> _scrollDone = new HashSet<RectTransform>();
         /// <summary>滚动初始化重试上限（0.25s 调用一次，40 次约 10 秒），达到后放弃，避免无限重试刷日志。</summary>
         private const int MaxScrollAttempts = 40;
+        /// <summary>常规设置行的行高（也是量不到高度时的兜底值）。</summary>
+        private const float FallbackRowHeight = 10f;
+        /// <summary>
+        /// 行高上限：超过此值视为"读到的是预制件默认尺寸"而不是真实内容高度，改用兜底值。
+        /// 正常设置行约 9~15 单位，预制件默认尺寸接近 100。
+        /// </summary>
+        private const float MaxRowHeight = 30f;
         private readonly Dictionary<RectTransform, int> _scrollAttempts = new Dictionary<RectTransform, int>();
+
+        /// <summary>上一次应用到 UI 的彩虹开关值（null 表示还没应用过）。</summary>
+        private bool? _rainbowStateApplied;
 
         private ClockConfig Config => Plugin.Config;
 
         // ==================== BSML 值绑定 ====================
 
-        [UIValue("ClockTypeValue")]
-        public int ClockTypeValue
+        [UIValue("Clock1ContentValue")]
+        public int Clock1ContentValue
         {
-            get => Config.ClockType;
-            set => Config.ClockType = value;
+            get => NormalizeContent(Config.Clock1Content, false);
+            set => Config.Clock1Content = value;
+        }
+
+        [UIValue("Clock2ContentValue")]
+        public int Clock2ContentValue
+        {
+            get => NormalizeContent(Config.Clock2Content, false);
+            set => Config.Clock2Content = value;
+        }
+
+        [UIValue("Clock3ContentValue")]
+        public int Clock3ContentValue
+        {
+            get => NormalizeContent(Config.Clock3Content, false);
+            set => Config.Clock3Content = value;
+        }
+
+        // ===== 局内（歌曲/关卡中）· 只有内容可配置，颜色等设置与局外共用 =====
+
+        [UIValue("InGameClock1ContentValue")]
+        public int InGameClock1ContentValue
+        {
+            get => NormalizeContent(Config.InGameClock1Content, true);
+            set => Config.InGameClock1Content = value;
+        }
+
+        [UIValue("InGameClock2ContentValue")]
+        public int InGameClock2ContentValue
+        {
+            get => NormalizeContent(Config.InGameClock2Content, true);
+            set => Config.InGameClock2Content = value;
+        }
+
+        [UIValue("InGameClock3ContentValue")]
+        public int InGameClock3ContentValue
+        {
+            get => NormalizeContent(Config.InGameClock3Content, true);
+            set => Config.InGameClock3Content = value;
+        }
+
+        /// <summary>局内置底：仅局内生效，临时把位置 Y（上下）/ Z（前后）换成内置的置底数值。</summary>
+        [UIValue("InGameBottomAlignValue")]
+        public bool InGameBottomAlignValue
+        {
+            get => Config.InGameBottomAlign;
+            set => Config.InGameBottomAlign = value;
+        }
+
+        /// <summary>局内时钟缩放倍率：仅局内生效，作用在字号上（整体等比缩放）。</summary>
+        [UIValue("InGameScaleValue")]
+        public float InGameScaleValue
+        {
+            get => Config.InGameScale;
+            set => Config.InGameScale = value;
         }
 
         [UIValue("LanguageValue")]
@@ -51,29 +115,11 @@ namespace RainbowClock
             set => Config.Language = value;
         }
 
-        [UIValue("TimeZoneValue")]
-        public string TimeZoneValue
-        {
-            get
-            {
-                string id = Config.TimeZoneId;
-                return string.IsNullOrEmpty(id) ? TimeZoneInfo.Local.Id : id;
-            }
-            set => Config.TimeZoneId = value;
-        }
-
         [UIValue("InSongValue")]
         public bool InSongValue
         {
             get => Config.InSong;
             set => Config.InSong = value;
-        }
-
-        [UIValue("InReplayValue")]
-        public bool InReplayValue
-        {
-            get => Config.InReplay;
-            set => Config.InReplay = value;
         }
 
         [UIValue("TwelveValue")]
@@ -90,39 +136,11 @@ namespace RainbowClock
             set => Config.SecToggle = value;
         }
 
-        [UIValue("BatteryValue")]
-        public bool BatteryValue
-        {
-            get => Config.ShowBattery;
-            set => Config.ShowBattery = value;
-        }
-
-        [UIValue("KillAdbOnExitValue")]
-        public bool KillAdbOnExitValue
-        {
-            get => Config.KillAdbOnExit;
-            set => Config.KillAdbOnExit = value;
-        }
-
         [UIValue("RainbowValue")]
         public bool RainbowValue
         {
             get => Config.RainbowClock;
             set => Config.RainbowClock = value;
-        }
-
-        [UIValue("ClockTwoValue")]
-        public bool ClockTwoValue
-        {
-            get => Config.ClockTwoEnabled;
-            set => Config.ClockTwoEnabled = value;
-        }
-
-        [UIValue("ClockTwoTypeValue")]
-        public int ClockTwoTypeValue
-        {
-            get => Config.ClockTwoType;
-            set => Config.ClockTwoType = value;
         }
 
         [UIValue("PosXValue")]
@@ -153,11 +171,26 @@ namespace RainbowClock
             set => Config.FontSize = value;
         }
 
-        [UIValue("ClockColorValue")]
-        public Color ClockColorValue
+        // 颜色行直接把 Unity Color 传给 color-setting，避免宿主持有另一份颜色状态导致两者不同步
+        [UIValue("Clock1ColorValue")]
+        public Color Clock1ColorValue
         {
-            get => Config.GetColor();
-            set => Config.SetColor(value);
+            get => ParseColor(Config.Clock1Color);
+            set => Config.SetSlotColor(0, value);
+        }
+
+        [UIValue("Clock2ColorValue")]
+        public Color Clock2ColorValue
+        {
+            get => ParseColor(Config.Clock2Color);
+            set => Config.SetSlotColor(1, value);
+        }
+
+        [UIValue("Clock3ColorValue")]
+        public Color Clock3ColorValue
+        {
+            get => ParseColor(Config.Clock3Color);
+            set => Config.SetSlotColor(2, value);
         }
 
         [UIValue("FpsColorValue")]
@@ -167,76 +200,111 @@ namespace RainbowClock
             set => Config.SetFpsColor(value);
         }
 
+        private static Color ParseColor(string hex)
+        {
+            return ColorUtility.TryParseHtmlString(hex, out Color color) ? color : Color.white;
+        }
+
         // ==================== 下拉选项与格式化 ====================
 
-        [UIValue("ClockTypeOptions")]
-        public int[] ClockTypeOptions => new[] { 0, 1, 5 };
+        /// <summary>局外槽位内容选项：0=隐藏、1=本次启动总时长、2=本次游玩时长、3=帧率、4=当前时间。</summary>
+        [UIValue("ContentOptions")]
+        public int[] ContentOptions => new[]
+        {
+            (int)ClockContent.Hidden,
+            (int)ClockContent.GameTotal,
+            (int)ClockContent.PlaySession,
+            (int)ClockContent.Fps,
+            (int)ClockContent.CurrentTime
+        };
 
-        [UIValue("ClockTwoTypeOptions")]
-        public int[] ClockTwoTypeOptions => new[] { 4, 0, 1, 5 };
+        /// <summary>
+        /// 局内槽位内容选项：在局外基础上追加"歌曲剩余时长""歌曲当前百分比"。
+        /// 新选项一律追加在末尾，避免已有配置里的数值含义发生漂移。
+        /// </summary>
+        [UIValue("InGameContentOptions")]
+        public int[] InGameContentOptions => new[]
+        {
+            (int)ClockContent.Hidden,
+            (int)ClockContent.GameTotal,
+            (int)ClockContent.PlaySession,
+            (int)ClockContent.Fps,
+            (int)ClockContent.CurrentTime,
+            (int)ClockContent.SongRemaining,
+            (int)ClockContent.SongProgress
+        };
+
+        /// <summary>该内容值在当前分区是否可选（歌曲相关只在局内有意义）。</summary>
+        private static bool IsValidContent(int value, bool inGame)
+        {
+            switch ((ClockContent)value)
+            {
+                case ClockContent.Hidden:
+                case ClockContent.GameTotal:
+                case ClockContent.PlaySession:
+                case ClockContent.Fps:
+                case ClockContent.CurrentTime:
+                    return true;
+                case ClockContent.SongRemaining:
+                case ClockContent.SongProgress:
+                    return inGame;
+                default:
+                    // 已移除的取值（如旧的 UTC=5）落到这里
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// 把无效的内容值归一化为"隐藏"。
+        /// 旧配置里可能残留已移除的取值（如 UTC=5），而下拉选项列表已不含它——
+        /// 直接把原值交给下拉会显示错位，归一化后 UI 与运行时行为一致（都是隐藏），
+        /// 并在下次保存配置时自愈。
+        /// </summary>
+        private static int NormalizeContent(int value, bool inGame)
+        {
+            return IsValidContent(value, inGame) ? value : (int)ClockContent.Hidden;
+        }
 
         [UIValue("LanguageOptions")]
         public int[] LanguageOptions => new[] { 0, 1, 2 };
 
-        private static readonly string[] TimeZoneIds = BuildTimeZoneIds();
-
-        [UIValue("TimeZoneOptions")]
-        public string[] TimeZoneOptions => TimeZoneIds;
-
-        private static string[] BuildTimeZoneIds()
-        {
-            try
-            {
-                var zones = TimeZoneInfo.GetSystemTimeZones();
-                var ids = new string[zones.Count];
-                for (int i = 0; i < zones.Count; i++)
-                {
-                    ids[i] = zones[i].Id;
-                }
-                return ids;
-            }
-            catch
-            {
-                return new[] { TimeZoneInfo.Local.Id };
-            }
-        }
-
-        [UIAction("ClockTypeFormatter")]
-        public string ClockTypeFormatter(object value) => Loc.GetClockTypeName(Convert.ToInt32(value));
+        [UIAction("ContentFormatter")]
+        public string ContentFormatter(object value) => Loc.GetContentName(Convert.ToInt32(value));
 
         [UIAction("LanguageFormatter")]
         public string LanguageFormatter(object value) => Loc.GetLanguageName(Convert.ToInt32(value));
 
-        [UIAction("TimeZoneFormatter")]
-        public string TimeZoneFormatter(object value)
-        {
-            string id = Convert.ToString(value);
-            try
-            {
-                return TimeZoneInfo.FindSystemTimeZoneById(id).DisplayName;
-            }
-            catch
-            {
-                return id;
-            }
-        }
-
         // ==================== 组件引用（解析后填充） ====================
 
-        [UIComponent("ClockType")]
-        internal DropDownListSetting ClockTypeDropdown;
+        [UIComponent("Clock1Content")]
+        internal DropDownListSetting Clock1ContentDropdown;
+
+        [UIComponent("Clock2Content")]
+        internal DropDownListSetting Clock2ContentDropdown;
+
+        [UIComponent("Clock3Content")]
+        internal DropDownListSetting Clock3ContentDropdown;
+
+        [UIComponent("InGameClock1Content")]
+        internal DropDownListSetting InGameClock1ContentDropdown;
+
+        [UIComponent("InGameClock2Content")]
+        internal DropDownListSetting InGameClock2ContentDropdown;
+
+        [UIComponent("InGameClock3Content")]
+        internal DropDownListSetting InGameClock3ContentDropdown;
 
         [UIComponent("Lang")]
         internal DropDownListSetting LanguageDropdown;
 
-        [UIComponent("TimeZone")]
-        internal DropDownListSetting TimeZoneDropdown;
-
         [UIComponent("TogInSong")]
         internal ToggleSetting ShowInSongToggle;
 
-        [UIComponent("TogInReplay")]
-        internal ToggleSetting ShowInReplayToggle;
+        [UIComponent("TogInGameBottom")]
+        internal ToggleSetting InGameBottomToggle;
+
+        [UIComponent("InGameScale")]
+        internal IncrementSetting InGameScaleSetting;
 
         [UIComponent("TogTwelve")]
         internal ToggleSetting TwelveToggle;
@@ -244,17 +312,8 @@ namespace RainbowClock
         [UIComponent("TogSeconds")]
         internal ToggleSetting SecondsToggle;
 
-        [UIComponent("TogBattery")]
-        internal ToggleSetting BatteryToggle;
-
         [UIComponent("TogRainbow")]
         internal ToggleSetting RainbowToggle;
-
-        [UIComponent("TogClockTwo")]
-        internal ToggleSetting ClockTwoToggle;
-
-        [UIComponent("ClockTwoType")]
-        internal DropDownListSetting ClockTwoTypeDropdown;
 
         [UIComponent("FontSize")]
         internal IncrementSetting FontSizeSetting;
@@ -268,8 +327,14 @@ namespace RainbowClock
         [UIComponent("PosZ")]
         internal IncrementSetting PosZSetting;
 
-        [UIComponent("ColorRow")]
-        internal ColorSetting ClockColorRow;
+        [UIComponent("Clock1ColorRow")]
+        internal ColorSetting Clock1ColorRow;
+
+        [UIComponent("Clock2ColorRow")]
+        internal ColorSetting Clock2ColorRow;
+
+        [UIComponent("Clock3ColorRow")]
+        internal ColorSetting Clock3ColorRow;
 
         [UIComponent("FpsColorRow")]
         internal ColorSetting FpsColorRow;
@@ -285,10 +350,60 @@ namespace RainbowClock
 
         // ==================== 动作 ====================
 
-        [UIAction("OnClockTypeChanged")]
-        public void OnClockTypeChanged(int value)
+        [UIAction("OnClock1ContentChanged")]
+        public void OnClock1ContentChanged(int value)
         {
-            // 值已通过 ClockTypeValue 写回配置
+            OnContentChanged();
+        }
+
+        [UIAction("OnClock2ContentChanged")]
+        public void OnClock2ContentChanged(int value)
+        {
+            OnContentChanged();
+        }
+
+        [UIAction("OnClock3ContentChanged")]
+        public void OnClock3ContentChanged(int value)
+        {
+            OnContentChanged();
+        }
+
+        // ===== 局内内容变化（只有内容可配置） =====
+
+        [UIAction("OnInGameClock1ContentChanged")]
+        public void OnInGameClock1ContentChanged(int value)
+        {
+            OnContentChanged();
+        }
+
+        [UIAction("OnInGameClock2ContentChanged")]
+        public void OnInGameClock2ContentChanged(int value)
+        {
+            OnContentChanged();
+        }
+
+        [UIAction("OnInGameClock3ContentChanged")]
+        public void OnInGameClock3ContentChanged(int value)
+        {
+            OnContentChanged();
+        }
+
+        [UIAction("OnClock1ColorChanged")]
+        public void OnClock1ColorChanged(Color value)
+        {
+            Config.SetSlotColor(0, value);
+        }
+
+        [UIAction("OnClock2ColorChanged")]
+        public void OnClock2ColorChanged(Color value)
+        {
+            Config.SetSlotColor(1, value);
+        }
+
+        [UIAction("OnClock3ColorChanged")]
+        public void OnClock3ColorChanged(Color value)
+        {
+            Config.SetSlotColor(2, value);
         }
 
         [UIAction("OnLangChanged")]
@@ -299,10 +414,23 @@ namespace RainbowClock
             Plugin.UpdateMenuButtonHint();
         }
 
+        /// <summary>彩虹开关变化：颜色配置在彩虹模式下无效，立即按开关显隐这几行。</summary>
+        [UIAction("OnRainbowChanged")]
+        public void OnRainbowChanged(bool value)
+        {
+            ApplyColorRowVisibility();
+        }
+
         [UIAction("RefreshBattery")]
         public void RefreshBattery()
         {
             AdbBattery.RefreshNow(true); // 手动刷新：重置重试计数并恢复自动轮询
+        }
+
+        /// <summary>槽位内容变化：配置已由 value 绑定写回，这里只做下拉与状态刷新。</summary>
+        private void OnContentChanged()
+        {
+            // 内容变化会改变槽位文字宽度与可见槽位数量，控制器每 0.25s 自动重排，无需额外处理
         }
 
         // ==================== 由主协程驱动 ====================
@@ -362,23 +490,20 @@ namespace RainbowClock
             }
 
             // 2) 当前页面的本地化/时区定制/ADB 状态（字段绑定的是最近解析的页面）
-            bool parsed = ClockTypeDropdown != null && SettingsRowsLayout != null;
-            if (parsed)
+            if (SettingsRowsLayout != null && Clock1ContentDropdown != null)
             {
-                if (SettingsRowsLayout != _lastRowsLayout)
+                // 两个入口各自解析一次：颜色行数组实例变化即代表换了一个页面，
+                // 必须重新本地化（否则第二个入口打开时标签还是英文/旧语言）
+                var colorRows = new[] { Clock1ColorRow, Clock2ColorRow, Clock3ColorRow, FpsColorRow };
+                bool newPage = _lastColorRows == null || !SameRows(_lastColorRows, colorRows);
+                if (newPage)
                 {
-                    _lastRowsLayout = SettingsRowsLayout;
+                    _lastColorRows = colorRows;
                     _localized = false;
-                    _timeZoneCustomized = false;
                 }
                 if (!_localized)
                 {
                     RefreshLanguage();
-                }
-                if (!_timeZoneCustomized && TimeZoneDropdown != null)
-                {
-                    _timeZoneCustomized = true;
-                    CustomizeTimeZoneDropdown();
                 }
                 // ADB 状态或目标设备变化时刷新按钮文字（连接状态/错误提示）
                 if (AdbBattery.LastErrorType != _lastBatteryErrorShown
@@ -388,7 +513,150 @@ namespace RainbowClock
                     _lastButtonSerial = AdbBattery.TargetSerial;
                     RefreshBatteryButtonText();
                 }
+
+                // 彩虹模式下行显隐需要跟随（开启彩虹时颜色配置无效，隐藏这几行）
+                if (newPage || _rainbowStateApplied != Plugin.Config.RainbowClock)
+                {
+                    ApplyColorRowVisibility();
+                }
             }
+        }
+
+        /// <summary>
+        /// 按彩虹开关显隐"时钟 1/2/3 颜色 + FPS 颜色"这四行。
+        /// 彩虹开启时这些单独颜色不生效，隐藏掉避免误导；关闭时才显示。
+        /// 行显隐会改变滚动内容总高，所以隐藏后必须重算滚动范围。
+        /// </summary>
+        private void ApplyColorRowVisibility()
+        {
+            bool showColors = !Plugin.Config.RainbowClock;
+            _rainbowStateApplied = Plugin.Config.RainbowClock;
+
+            var rows = new[] { Clock1ColorRow, Clock2ColorRow, Clock3ColorRow, FpsColorRow };
+            foreach (ColorSetting row in rows)
+            {
+                if (row == null)
+                {
+                    continue;
+                }
+                GameObject root = FindRowRoot(row);
+                if (root != null && root.activeSelf != showColors)
+                {
+                    root.SetActive(showColors);
+                }
+            }
+
+            // 行数变了 → 重新回填行高并更新滚动范围
+            RefreshScrollContent();
+        }
+
+        /// <summary>
+        /// 找到设置行的根物体（SettingsRows 的直接子物体）。
+        /// BSML 组件通常就在行根上，但不能假定，所以向上找到"父级是带垂直布局的容器"那一层。
+        /// </summary>
+        private static GameObject FindRowRoot(Component setting)
+        {
+            Transform t = setting.transform;
+            while (t.parent != null && t.parent.GetComponent<VerticalLayoutGroup>() == null)
+            {
+                t = t.parent;
+            }
+            return t.gameObject;
+        }
+
+        /// <summary>
+        /// 计算设置行的行高，并把结果写回 LayoutElement（让 VerticalLayoutGroup 的排布与
+        /// 手工算出的滚动内容高度用同一个值）。
+        ///
+        /// 关键防御：**不能信任预制件的 rect.height**。
+        /// 布局未完成时它等于预制件的默认尺寸，可能接近 100——曾被当成内容高度写进 preferredHeight，
+        /// 结果那一行被撑成近百单位高，在它后面留下一大段空白（"两段设置之间空隙过大"就是这个原因）。
+        /// 所以超过 MaxRowHeight 一律视为不可信，改用常规行高。
+        /// </summary>
+        private static float ComputeRowHeight(Transform child)
+        {
+            var layoutElement = child.GetComponent<LayoutElement>();
+            if (layoutElement == null)
+            {
+                // 没有 LayoutElement 的行：补一个兜底高度，避免塌成 0 高看不见
+                child.gameObject.AddComponent<LayoutElement>().preferredHeight = FallbackRowHeight;
+                return FallbackRowHeight;
+            }
+
+            float h = ((RectTransform)child).rect.height;
+            if (h <= 0.01f || h > MaxRowHeight)
+            {
+                h = FallbackRowHeight; // 量不到，或量到的是预制件默认尺寸 → 用常规行高
+            }
+            else if (h < 9f)
+            {
+                h = 9f;
+            }
+            layoutElement.preferredHeight = h;
+            return h;
+        }
+
+        /// <summary>行显隐/行高变化后重算滚动内容高度（按当前处于激活状态的行）。</summary>
+        private void RefreshScrollContent()
+        {
+            RectTransform clip = ScrollClip;
+            if (clip == null)
+            {
+                return;
+            }
+            try
+            {
+                var page = clip.GetChild(0) as RectTransform;
+                var pageLayout = page != null ? page.GetComponent<VerticalLayoutGroup>() : null;
+                if (page == null || pageLayout == null)
+                {
+                    return;
+                }
+
+                float total = 0f;
+                int count = 0;
+                foreach (Transform child in page)
+                {
+                    if (!child.gameObject.activeSelf)
+                    {
+                        continue; // 隐藏的行不占高度
+                    }
+                    total += ComputeRowHeight(child);
+                    count++;
+                }
+                if (count > 1)
+                {
+                    total += pageLayout.spacing * (count - 1);
+                }
+
+                page.sizeDelta = new Vector2(0f, total);
+
+                var scroller = clip.GetComponent<SettingsScroller>();
+                if (scroller != null)
+                {
+                    scroller.UpdateScrollable(total - clip.rect.height);
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log?.Warn("[RainbowClock] RefreshScrollContent: " + e.Message);
+            }
+        }
+
+        private static bool SameRows(ColorSetting[] a, ColorSetting[] b)
+        {
+            if (a.Length != b.Length)
+            {
+                return false;
+            }
+            for (int i = 0; i < a.Length; i++)
+            {
+                if (!ReferenceEquals(a[i], b[i]))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>
@@ -440,22 +708,11 @@ namespace RainbowClock
                 int count = 0;
                 foreach (Transform child in page)
                 {
-                    var layoutElement = child.GetComponent<LayoutElement>();
-                    if (layoutElement == null)
+                    if (!child.gameObject.activeSelf)
                     {
-                        continue;
+                        continue; // 隐藏的行（如彩虹模式下隐藏的颜色行）不占高度
                     }
-                    float h = ((RectTransform)child).rect.height;
-                    if (h <= 0.01f)
-                    {
-                        h = 10f;
-                    }
-                    else if (h < 9f)
-                    {
-                        h = 9f;
-                    }
-                    layoutElement.preferredHeight = h;
-                    total += h;
+                    total += ComputeRowHeight(child);
                     count++;
                 }
                 if (count > 1)
@@ -493,84 +750,45 @@ namespace RainbowClock
             }
         }
 
-        /// <summary>
-        /// 时区下拉定制：限制列表高度（内部滚动，避免遮挡下方设置项）并加宽列表与按钮。
-        /// </summary>
-        private void CustomizeTimeZoneDropdown()
-        {
-            try
-            {
-                if (TimeZoneDropdown?.Dropdown == null)
-                {
-                    return;
-                }
-                // 时区名较长，按钮加宽
-                var dropdownTransform = TimeZoneDropdown.Dropdown.transform as RectTransform;
-                if (dropdownTransform != null)
-                {
-                    Vector2 size = dropdownTransform.sizeDelta;
-                    size.x = 55f;
-                    dropdownTransform.sizeDelta = size;
-                }
-
-                var tableViews = TimeZoneDropdown.Dropdown.GetComponentsInChildren<TableView>(true);
-                foreach (var tableView in tableViews)
-                {
-                    var tableRect = tableView.transform as RectTransform;
-                    if (tableRect == null)
-                    {
-                        continue;
-                    }
-                    Vector2 tableSize = tableRect.sizeDelta;
-                    tableSize.x = 110f;
-                    tableSize.y = 45f;
-                    tableRect.sizeDelta = tableSize;
-                }
-            }
-            catch (Exception e)
-            {
-                Plugin.Log?.Error("[RainbowClock] CustomizeTimeZoneDropdown: " + e);
-            }
-        }
-
         private void RefreshLanguage()
         {
             _labels.Clear();
 
             CollectLabels();
-            foreach (var (label, enKey) in _labels)
+            foreach (var entry in _labels)
             {
-                if (label != null)
+                if (entry.label != null)
                 {
-                    label.text = Loc.T(enKey);
+                    entry.label.text = Loc.T(entry.enKey);
                 }
             }
 
-            // 下拉选项重渲染
-            if (ClockTypeDropdown != null)
-            {
-                ClockTypeDropdown.UpdateChoices();
-                ClockTypeDropdown.Value = Config.ClockType;
-            }
-            if (ClockTwoTypeDropdown != null)
-            {
-                ClockTwoTypeDropdown.UpdateChoices();
-                ClockTwoTypeDropdown.Value = Config.ClockTwoType;
-            }
+            // 下拉选项重渲染（value 与配置一致，重设是幂等的，不会把选项弹回旧值）
+            UpdateDropdown(Clock1ContentDropdown, Clock1ContentValue);
+            UpdateDropdown(Clock2ContentDropdown, Clock2ContentValue);
+            UpdateDropdown(Clock3ContentDropdown, Clock3ContentValue);
+            UpdateDropdown(InGameClock1ContentDropdown, InGameClock1ContentValue);
+            UpdateDropdown(InGameClock2ContentDropdown, InGameClock2ContentValue);
+            UpdateDropdown(InGameClock3ContentDropdown, InGameClock3ContentValue);
             if (LanguageDropdown != null)
             {
                 LanguageDropdown.UpdateChoices();
                 // 注意：不能在此重设 Value —— BSML 的 on-change 先于 apply-on-change 触发，
                 // 语言切换时 Config 还是旧值，重设会把下拉弹回旧选项
             }
-            if (TimeZoneDropdown != null)
-            {
-                TimeZoneDropdown.UpdateChoices();
-                TimeZoneDropdown.Value = TimeZoneValue;
-            }
 
             RefreshBatteryButtonText();
             _localized = true;
+        }
+
+        private static void UpdateDropdown(DropDownListSetting dropdown, int value)
+        {
+            if (dropdown == null)
+            {
+                return;
+            }
+            dropdown.UpdateChoices();
+            dropdown.Value = value;
         }
 
         private void CollectLabels()
@@ -584,27 +802,37 @@ namespace RainbowClock
             }
 
             Add(ShowInSongToggle?.TextMesh, "show_song");
-            Add(ShowInReplayToggle?.TextMesh, "show_replay");
+            Add(InGameBottomToggle?.TextMesh, "ingame_bottom");
+            Add(InGameScaleSetting != null ? FindNameLabel(InGameScaleSetting) : null, "ingame_scale");
             Add(TwelveToggle?.TextMesh, "twelve");
             Add(SecondsToggle?.TextMesh, "seconds");
-            Add(BatteryToggle?.TextMesh, "battery");
             Add(RainbowToggle?.TextMesh, "rainbow");
-            Add(ClockTwoToggle?.TextMesh, "clock_two");
             Add(FontSizeSetting != null ? FindNameLabel(FontSizeSetting) : null, "font_size");
             Add(PosXSetting != null ? FindNameLabel(PosXSetting) : null, "pos_x");
             Add(PosYSetting != null ? FindNameLabel(PosYSetting) : null, "pos_y");
             Add(PosZSetting != null ? FindNameLabel(PosZSetting) : null, "pos_z");
 
-            // 下拉行标签在组件父级 "Label"
-            Add(FindLabel(ClockTypeDropdown), "clock_type");
-            Add(FindLabel(TimeZoneDropdown), "time_zone");
+            // 下拉行标签在组件父级 "Label"（用"局外/局内"前缀区分两套内容，不设分区标题行）
+            Add(FindLabel(Clock1ContentDropdown), "outside_slot1");
+            Add(FindLabel(Clock2ContentDropdown), "outside_slot2");
+            Add(FindLabel(Clock3ContentDropdown), "outside_slot3");
+            Add(FindLabel(InGameClock1ContentDropdown), "ingame_slot1");
+            Add(FindLabel(InGameClock2ContentDropdown), "ingame_slot2");
+            Add(FindLabel(InGameClock3ContentDropdown), "ingame_slot3");
             Add(FindLabel(LanguageDropdown), "language");
-            Add(FindLabel(ClockTwoTypeDropdown), "clock_two_type");
 
             // 颜色行标签在组件自身 "NameText"
-            if (ClockColorRow != null)
+            if (Clock1ColorRow != null)
             {
-                Add(ClockColorRow.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>(), "clock_color");
+                Add(Clock1ColorRow.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>(), "slot1_color");
+            }
+            if (Clock2ColorRow != null)
+            {
+                Add(Clock2ColorRow.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>(), "slot2_color");
+            }
+            if (Clock3ColorRow != null)
+            {
+                Add(Clock3ColorRow.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>(), "slot3_color");
             }
             if (FpsColorRow != null)
             {
@@ -671,6 +899,26 @@ namespace RainbowClock
             }
 
             BeatSaberUI.SetButtonText(RefreshBatteryButton, battText);
+
+            // 按钮提示也需跟随语言刷新（说明槽位 4 固定为电量且取不到时自动隐藏）
+            SetButtonHint(RefreshBatteryButton, Loc.T("battery_fixed"));
+        }
+
+        /// <summary>刷新按钮的 HoverHint 文本（说明槽位 4 固定为电量、取不到时自动隐藏）。</summary>
+        private static void SetButtonHint(Component button, string text)
+        {
+            try
+            {
+                var hint = button.GetComponent<HMUI.HoverHint>();
+                if (hint != null)
+                {
+                    hint.text = text;
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log?.Warn("[RainbowClock] set button hint failed: " + e.Message);
+            }
         }
     }
 #pragma warning restore 0649

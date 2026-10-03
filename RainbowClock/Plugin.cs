@@ -73,6 +73,15 @@ namespace RainbowClock
                 }
                 if (_settingsRegistered && !ReferenceEquals(_registeredSettingsInstance, bsmlSettings))
                 {
+                    // 容器重建：先从旧实例摘掉，避免旧条目一直挂在失效的菜单对象上
+                    try
+                    {
+                        _registeredSettingsInstance.RemoveSettingsMenu(SettingsHost);
+                    }
+                    catch (Exception e)
+                    {
+                        Log.Warn("Failed to remove stale settings menu: " + e.Message);
+                    }
                     _settingsRegistered = false;
                     Log.Info("BSMLSettings instance changed, re-registering settings menu.");
                 }

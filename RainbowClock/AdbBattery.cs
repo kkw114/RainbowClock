@@ -23,17 +23,18 @@ namespace RainbowClock
     {
         private const long TicksPerSecond = 10_000_000L;
 
-        /// <summary>电量连续失败次数上限：达到后停止自动轮询并结束 adb。</summary>
+        /// <summary>电量**连续**失败次数上限：达到后停止自动轮询并结束 adb。一次成功即清零。</summary>
         private const int MaxBatteryRetries = 3;
-        /// <summary>失败后的重试间隔（秒）。</summary>
+        /// <summary>失败后的重试间隔（秒），随连续失败次数递增。</summary>
         private const int BatteryRetryIntervalSeconds = 30;
+        /// <summary>失败重试间隔的上限（秒）。</summary>
+        private const int BatteryMaxRetryIntervalSeconds = 180;
         /// <summary>进程启动后首次查询电量的延迟（秒）。</summary>
         private const int BatteryStartDelaySeconds = 10;
 
         private static readonly object Lock = new object();
 
         private static int _level = -1;
-        private static bool _charging;
         private static bool _available;
         private static bool _busy;
         private static bool _shuttingDown;
@@ -43,6 +44,8 @@ namespace RainbowClock
         private static bool _automaticPollingEnabled = true;
         private static string _resolvedAdb;
         private static BatteryError _lastErrorType = BatteryError.None;
+        /// <summary>已格式化的显示串缓存：只在查询结果变化时重建（主线程 4Hz 读取，避免反复拼字符串/开色）。</summary>
+        private static string _currentString = "";
 
         public static bool Available
         {
@@ -57,23 +60,13 @@ namespace RainbowClock
         /// <summary>缓存结果格式化的显示串（带颜色），不可用时为空串。</summary>
         public static string CurrentString
         {
-            get
-            {
-                lock (Lock)
-                {
-                    if (!_available || _level < 0)
-                    {
-                        return "";
-                    }
-                    return FormatBattery(_level, _charging);
-                }
-            }
+            get { lock (Lock) { return _currentString; } }
         }
 
         /// <summary>
         /// 主线程每 0.25s 调用：到时间自动刷新。
-        /// 进程启动 10 秒后首次查询；失败时每 30 秒重试一次，
-        /// 连续失败 3 次后停止自动轮询并结束 adb 进程。
+        /// 进程启动 10 秒后首次查询；失败后按递增间隔重试，
+        /// 连续失败 3 次后停止自动轮询并结束 adb 进程（一次成功即清零计数）。
         /// </summary>
         public static void Tick()
         {
@@ -97,6 +90,23 @@ namespace RainbowClock
             }
         }
 
+        /// <summary>
+        /// 失败后的重试间隔（秒）：随连续失败次数递增，避免设备长时间离线时每 30 秒白跑一次 adb。
+        /// </summary>
+        private static long RetryIntervalTicks(int retryCount)
+        {
+            int seconds = BatteryRetryIntervalSeconds;
+            for (int i = 0; i < retryCount && seconds < BatteryMaxRetryIntervalSeconds; i++)
+            {
+                seconds *= 2;
+            }
+            if (seconds > BatteryMaxRetryIntervalSeconds)
+            {
+                seconds = BatteryMaxRetryIntervalSeconds;
+            }
+            return seconds * TicksPerSecond;
+        }
+
         /// <summary>立即异步刷新（设置页按钮 / 自动轮询）。手动调用时重新启用自动轮询并重置重试计数。</summary>
         public static void RefreshNow(bool manual = false)
         {
@@ -104,18 +114,24 @@ namespace RainbowClock
             {
                 return;
             }
-            if (manual)
+
+            bool available;
+            int retryCount;
+            lock (Lock)
             {
-                lock (Lock)
+                if (manual)
                 {
                     _automaticPollingEnabled = true;
                     _retryCount = 0;
                 }
+                available = _available;
+                retryCount = _retryCount;
             }
-            // 下次自动查询间隔：成功时按配置间隔，失败重试按固定 30 秒
-            long interval = (Available
-                ? Plugin.Config.BatteryRefreshSeconds
-                : BatteryRetryIntervalSeconds) * TicksPerSecond;
+
+            // 下次自动查询间隔：成功时按配置间隔，失败时按递增的重试间隔
+            long interval = available
+                ? Plugin.Config.BatteryRefreshSeconds * TicksPerSecond
+                : RetryIntervalTicks(retryCount);
             if (interval < 10 * TicksPerSecond)
             {
                 interval = 10 * TicksPerSecond;
@@ -145,6 +161,7 @@ namespace RainbowClock
                         _available = false;
                         _level = -1;
                         _lastErrorType = BatteryError.Unavailable;
+                        _currentString = "";
                     }
                     Plugin.Log?.Error("[RainbowClock] ADB query exception: " + e.Message);
                 }
@@ -196,7 +213,13 @@ namespace RainbowClock
         private static void QueryBattery()
         {
             // 解析目标设备：配置序列号优先，否则自动选择（有线 USB 优先，其次无线 WiFi）
-            ResolveDevice();
+            if (!ResolveDevice())
+            {
+                // 一个在线设备都没有：直接判定「未检测到设备」，
+                // 不再盲目执行 adb（没有 -s 参数时 adb 会等待/超时，白等 8 秒）
+                SetError(BatteryError.NoDevice);
+                return;
+            }
 
             // 通道 1：adb cmd battery
             bool noDevice;
@@ -261,19 +284,22 @@ namespace RainbowClock
 
         private static void SetOk(int level, int status)
         {
+            _ = status; // status 目前只用于日志；电量一律按电量值渐变，不区分充放电
+            string formatted = FormatBattery(level);
             lock (Lock)
             {
                 _level = level;
-                _charging = status == 2 || status == 5;
                 _available = true;
                 _lastErrorType = BatteryError.None;
+                _currentString = formatted;
             }
             // 记忆查询成功的设备（多设备选择时优先）
-            if (!string.IsNullOrEmpty(_targetSerial) && Plugin.Config.LastAdbSerial != _targetSerial)
+            string serial = TargetSerial;
+            if (!string.IsNullOrEmpty(serial) && Plugin.Config.LastAdbSerial != serial)
             {
-                Plugin.Config.LastAdbSerial = _targetSerial;
+                Plugin.Config.LastAdbSerial = serial;
             }
-            Plugin.Log?.Info($"[RainbowClock] battery: serial={_targetSerial} level={level} status={status} charging={status == 2 || status == 5}");
+            Plugin.Log?.Info($"[RainbowClock] battery: serial={serial} level={level} status={status} charging={status == 2 || status == 5}");
         }
 
         private static void SetError(BatteryError error)
@@ -283,6 +309,7 @@ namespace RainbowClock
                 _available = false;
                 _level = -1;
                 _lastErrorType = error;
+                _currentString = "";
             }
         }
 
@@ -294,6 +321,15 @@ namespace RainbowClock
             get { lock (Lock) { return _targetSerial; } }
         }
 
+        /// <summary>统一在锁内更新目标设备（查询在后台线程执行）。</summary>
+        private static void SetTargetSerial(string value)
+        {
+            lock (Lock)
+            {
+                _targetSerial = value ?? "";
+            }
+        }
+
         /// <summary>
         /// 解析目标设备（优先级）：
         /// 1. 配置的 AdbSerial（手动指定）
@@ -301,17 +337,17 @@ namespace RainbowClock
         /// 3. 上次查询成功的设备（自动记忆，在线则优先）
         /// 4. 无线 VR 头显（model 含 Quest/Pico/Vive/Index）
         /// 5. 无线其他设备（列表顺序）
+        /// 返回 false 表示没有任何可用目标（配置为空且无在线设备）。
         /// </summary>
-        private static void ResolveDevice()
+        private static bool ResolveDevice()
         {
             string configured = Plugin.Config.AdbSerial?.Trim() ?? "";
             if (!string.IsNullOrEmpty(configured))
             {
-                _targetSerial = configured;
-                return;
+                SetTargetSerial(configured);
+                return true;
             }
 
-            _targetSerial = "";
             string remembered = Plugin.Config.LastAdbSerial?.Trim() ?? "";
             string wired = "";
             string wirelessVr = "";
@@ -323,8 +359,9 @@ namespace RainbowClock
                 string output = RunAdbProcess("devices -l", out bool noDevice);
                 if (noDevice || output == null)
                 {
-                    Plugin.Log?.Warn($"[RainbowClock] ResolveDevice: noDevice={noDevice} output=null");
-                    return;
+                    Plugin.Log?.Warn($"[RainbowClock] ResolveDevice: noDevice={noDevice}");
+                    SetTargetSerial("");
+                    return false;
                 }
                 Plugin.Log?.Info($"[RainbowClock] ResolveDevice output: [{output.Trim()}]");
                 foreach (string rawLine in output.Split('\n'))
@@ -373,22 +410,26 @@ namespace RainbowClock
                 Plugin.Log?.Error("[RainbowClock] ResolveDevice: " + e.Message);
             }
 
+            string target;
             if (wired.Length > 0)
             {
-                _targetSerial = wired;
+                target = wired;
             }
             else if (rememberedOnline)
             {
-                _targetSerial = remembered;
+                target = remembered;
             }
             else if (wirelessVr.Length > 0)
             {
-                _targetSerial = wirelessVr;
+                target = wirelessVr;
             }
-            else if (wirelessAny.Length > 0)
+            else
             {
-                _targetSerial = wirelessAny;
+                target = wirelessAny;
             }
+
+            SetTargetSerial(target);
+            return target.Length > 0;
         }
 
         /// <summary>从 adb devices -l 输出行解析 model 字段并判断是否为 VR 头显。</summary>
@@ -417,7 +458,7 @@ namespace RainbowClock
             string serial = Plugin.Config.AdbSerial?.Trim() ?? "";
             if (string.IsNullOrEmpty(serial))
             {
-                serial = _targetSerial;
+                serial = TargetSerial;
             }
             if (!string.IsNullOrEmpty(serial))
             {
@@ -561,14 +602,15 @@ namespace RainbowClock
             {
                 try
                 {
-                    if (gameStart != DateTime.MinValue && p.StartTime < gameStart)
+                    DateTime startTime = p.StartTime; // 可能抛（进程已退出/权限不足），必须放在 try 内
+                    if (gameStart != DateTime.MinValue && startTime < gameStart)
                     {
                         continue; // 游戏启动前就存在的 adb，不属于本模组
                     }
                     p.Kill();
                     p.WaitForExit(2000);
                     killed++;
-                    Plugin.Log?.Info($"[RainbowClock] killed adb pid={p.Id} start={p.StartTime:HH:mm:ss}");
+                    Plugin.Log?.Info($"[RainbowClock] killed adb pid={p.Id} start={startTime:HH:mm:ss}");
                 }
                 catch (Exception e)
                 {
@@ -586,27 +628,34 @@ namespace RainbowClock
 
         /// <summary>
         /// 解析 adb 可执行文件：显式配置的路径 &gt; 游戏目录内置（部署时安装到游戏根目录） &gt; PATH 中的 adb。
+        /// 只在解析出"确定存在的文件"时才缓存：退化为裸 "adb"（PATH 查找）时不缓存，
+        /// 否则用户后放进游戏根目录的 adb.exe（或后改的 AdbPath）在本次游戏会话里永远不会被发现。
         /// </summary>
         private static string ResolveAdbExecutable()
         {
+            // 用户显式配置的路径：直接用，配置改了要立刻生效
+            string configured = Plugin.Config.AdbPath?.Trim() ?? "";
+            if (!string.IsNullOrEmpty(configured)
+                && !string.Equals(configured, "adb", StringComparison.OrdinalIgnoreCase))
+            {
+                return configured;
+            }
+
             if (_resolvedAdb != null)
             {
                 return _resolvedAdb;
             }
-            string adb;
-            string configured = Plugin.Config.AdbPath?.Trim() ?? "";
-            if (!string.IsNullOrEmpty(configured) && !string.Equals(configured, "adb", StringComparison.OrdinalIgnoreCase))
+
+            string gameLocal = FindGameLocalAdb();
+            if (!string.IsNullOrEmpty(gameLocal))
             {
-                adb = configured;
+                _resolvedAdb = gameLocal;
+                Plugin.Log?.Info("[RainbowClock] using bundled adb: " + gameLocal);
+                return _resolvedAdb;
             }
-            else
-            {
-                string gameLocal = FindGameLocalAdb();
-                adb = !string.IsNullOrEmpty(gameLocal) ? gameLocal : "adb";
-            }
-            _resolvedAdb = adb;
-            Plugin.Log?.Info("[RainbowClock] using adb: " + adb);
-            return adb;
+
+            // 退化为 PATH 查找（不缓存，下次查询再探一次游戏目录）
+            return "adb";
         }
 
         /// <summary>查找游戏根目录下内置的 adb.exe（Plugins 的上一级目录），部署时安装到那里。</summary>
@@ -647,7 +696,7 @@ namespace RainbowClock
         }
 
         /// <summary>按 Quest 版逻辑格式化电量：一律按电量渐变红→黄→绿（每 20% 均匀分布），不区分充电状态。</summary>
-        private static string FormatBattery(int level, bool charging)
+        private static string FormatBattery(int level)
         {
             string percent = level + "%";
             float t = level / 100f;

@@ -19,7 +19,8 @@ namespace RainbowClock
             {
                 if (firstActivation)
                 {
-                    SetTitle("彩虹时钟");
+                    // 标题跟随界面语言（原先硬编码中文，切英文后仍是中文）
+                    SetTitle(Loc.T("title"));
                     showBackButton = true;
 
                     _settingsViewController = BeatSaberUI.CreateViewController<ViewController>();

@@ -29,29 +29,43 @@ namespace RainbowClock
         static Loc()
         {
             // ============ 设置页标签 ============
-            En["clock_type"] = "Clock Type";              Zh["clock_type"] = "时钟类型";
-            En["time_zone"] = "Time Zone";                Zh["time_zone"] = "时区";
+            En["title"] = "Rainbow Clock";                Zh["title"] = "彩虹时钟";
             En["language"] = "Language";                  Zh["language"] = "语言";
             En["show_song"] = "Show During Song";         Zh["show_song"] = "游戏中显示";
-            En["show_replay"] = "Show During Replay";     Zh["show_replay"] = "回放中显示";
             En["twelve"] = "12/24 Hour Toggle";           Zh["twelve"] = "12/24 小时制";
-            En["seconds"] = "Show Seconds";               Zh["seconds"] = "显示秒";
-            En["battery"] = "Show Headset Battery (ADB)"; Zh["battery"] = "显示头显电量";
-            En["rainbow"] = "Rainbowify it";              Zh["rainbow"] = "彩虹效果";
+            En["seconds"] = "Current Time Seconds";        Zh["seconds"] = "当前时间显示秒";
             En["font_size"] = "Font Size";                Zh["font_size"] = "字号";
-            En["clock_color"] = "Clock Color";            Zh["clock_color"] = "时钟颜色";
-            En["fps_color"] = "FPS Color";                Zh["fps_color"] = "FPS 颜色";
-            En["clock_two"] = "Clock 2";                  Zh["clock_two"] = "时钟二";
-            En["clock_two_type"] = "Clock 2 Content";     Zh["clock_two_type"] = "时钟二内容";
             En["pos_x"] = "Position X (Left/Right)";      Zh["pos_x"] = "位置 X（左/右）";
             En["pos_y"] = "Position Y (Up/Down)";         Zh["pos_y"] = "位置 Y（上/下）";
             En["pos_z"] = "Position Z (Forward/Back)";    Zh["pos_z"] = "位置 Z（前/后）";
 
-            // ============ 时钟类型选项 ============
-            En["type_current"] = "Current Time";          Zh["type_current"] = "当前时间";
-            En["type_session"] = "Session Time";          Zh["type_session"] = "本次游玩";
-            En["type_utc"] = "UTC Time";                  Zh["type_utc"] = "UTC 时间";
-            En["type_fps"] = "FPS";                       Zh["type_fps"] = "FPS（帧率）";
+            // ============ 槽位设置（时钟 1~3；槽位 4 固定电量）============
+            // 不设分区标题（标题行会占高度、留下大段空白），直接靠"局外/局内"前缀区分
+            En["outside_slot1"] = "Out-of-song Clock 1";  Zh["outside_slot1"] = "局外时钟 1";
+            En["outside_slot2"] = "Out-of-song Clock 2";  Zh["outside_slot2"] = "局外时钟 2";
+            En["outside_slot3"] = "Out-of-song Clock 3";  Zh["outside_slot3"] = "局外时钟 3";
+            En["ingame_slot1"] = "In-song Clock 1";       Zh["ingame_slot1"] = "局内时钟 1";
+            En["ingame_slot2"] = "In-song Clock 2";       Zh["ingame_slot2"] = "局内时钟 2";
+            En["ingame_slot3"] = "In-song Clock 3";       Zh["ingame_slot3"] = "局内时钟 3";
+            En["ingame_bottom"] = "In-song Bottom Align"; Zh["ingame_bottom"] = "局内时钟置底";
+            En["ingame_scale"] = "In-song Clock Scale";   Zh["ingame_scale"] = "局内时钟缩放";
+            En["slot1_color"] = "Clock 1 Color";          Zh["slot1_color"] = "时钟 1 颜色";
+            En["slot2_color"] = "Clock 2 Color";          Zh["slot2_color"] = "时钟 2 颜色";
+            En["slot3_color"] = "Clock 3 Color";          Zh["slot3_color"] = "时钟 3 颜色";
+            En["battery_fixed"] = "Clock 4 is fixed to headset battery and hides automatically when unavailable";
+            Zh["battery_fixed"] = "时钟 4 固定显示头显电量，检测不到时自动隐藏";
+
+            En["rainbow"] = "Rainbowify it";              Zh["rainbow"] = "彩虹效果";
+            En["fps_color"] = "FPS Color";                Zh["fps_color"] = "FPS 颜色";
+
+            // ============ 槽位内容选项 ============
+            En["content_hidden"] = "Hidden";              Zh["content_hidden"] = "隐藏";
+            En["content_game_total"] = "Game Uptime";     Zh["content_game_total"] = "本次启动总时长";
+            En["content_play_session"] = "Play Time";     Zh["content_play_session"] = "本次游玩时长";
+            En["content_fps"] = "FPS";                    Zh["content_fps"] = "帧率";
+            En["content_current"] = "Current Time";       Zh["content_current"] = "当前时间";
+            En["content_song_remaining"] = "Song Remaining"; Zh["content_song_remaining"] = "歌曲剩余时长";
+            En["content_song_progress"] = "Song Progress"; Zh["content_song_progress"] = "歌曲当前百分比";
 
             // ============ 语言选项 ============
             En["lang_auto"] = "Auto (Follow Game)";       Zh["lang_auto"] = "自动 (跟随游戏)";
@@ -144,15 +158,19 @@ namespace RainbowClock
             }
         }
 
-        public static string GetClockTypeName(int type)
+        /// <summary>槽位内容下拉的名称（0=隐藏 … 7=歌曲当前百分比）。</summary>
+        public static string GetContentName(int content)
         {
-            return type switch
+            switch ((ClockContent)content)
             {
-                1 => T("type_session"),
-                4 => T("type_utc"),
-                5 => T("type_fps"),
-                _ => T("type_current")
-            };
+                case ClockContent.GameTotal: return T("content_game_total");
+                case ClockContent.PlaySession: return T("content_play_session");
+                case ClockContent.Fps: return T("content_fps");
+                case ClockContent.CurrentTime: return T("content_current");
+                case ClockContent.SongRemaining: return T("content_song_remaining");
+                case ClockContent.SongProgress: return T("content_song_progress");
+                default: return T("content_hidden");
+            }
         }
 
         public static string GetLanguageName(int mode)

@@ -1,23 +1,26 @@
 <bg id="ScrollClip">
   <vertical id="SettingsRows" spacing="2" child-expand-height="false" child-control-height="false">
-    <dropdown-list-setting id="ClockType" text="Clock Type" value="ClockTypeValue" options="ClockTypeOptions" formatter="ClockTypeFormatter" on-change="OnClockTypeChanged" apply-on-change="true" />
-    <dropdown-list-setting id="TimeZone" text="Time Zone" value="TimeZoneValue" options="TimeZoneOptions" formatter="TimeZoneFormatter" apply-on-change="true" />
     <dropdown-list-setting id="Lang" text="Language" value="LanguageValue" options="LanguageOptions" formatter="LanguageFormatter" on-change="OnLangChanged" apply-on-change="true" />
-    <toggle-setting id="TogClockTwo" text="Clock 2" value="ClockTwoValue" apply-on-change="true" />
-    <dropdown-list-setting id="ClockTwoType" text="Clock 2 Content" value="ClockTwoTypeValue" options="ClockTwoTypeOptions" formatter="ClockTypeFormatter" apply-on-change="true" />
+    <dropdown-list-setting id="Clock1Content" text="Out-of-song Clock 1" value="Clock1ContentValue" options="ContentOptions" formatter="ContentFormatter" on-change="OnClock1ContentChanged" apply-on-change="true" />
+    <dropdown-list-setting id="Clock2Content" text="Out-of-song Clock 2" value="Clock2ContentValue" options="ContentOptions" formatter="ContentFormatter" on-change="OnClock2ContentChanged" apply-on-change="true" />
+    <dropdown-list-setting id="Clock3Content" text="Out-of-song Clock 3" value="Clock3ContentValue" options="ContentOptions" formatter="ContentFormatter" on-change="OnClock3ContentChanged" apply-on-change="true" />
+    <dropdown-list-setting id="InGameClock1Content" text="In-song Clock 1" value="InGameClock1ContentValue" options="InGameContentOptions" formatter="ContentFormatter" on-change="OnInGameClock1ContentChanged" apply-on-change="true" />
+    <dropdown-list-setting id="InGameClock2Content" text="In-song Clock 2" value="InGameClock2ContentValue" options="InGameContentOptions" formatter="ContentFormatter" on-change="OnInGameClock2ContentChanged" apply-on-change="true" />
+    <dropdown-list-setting id="InGameClock3Content" text="In-song Clock 3" value="InGameClock3ContentValue" options="InGameContentOptions" formatter="ContentFormatter" on-change="OnInGameClock3ContentChanged" apply-on-change="true" />
+    <toggle-setting id="TogInGameBottom" text="In-song Bottom Align" value="InGameBottomAlignValue" apply-on-change="true" />
+    <increment-setting id="InGameScale" text="In-song Clock Scale" value="InGameScaleValue" increment="0.05" min="0.25" max="3" apply-on-change="true" />
+    <toggle-setting id="TogRainbow" text="Rainbowify it" value="RainbowValue" on-change="OnRainbowChanged" apply-on-change="true" />
     <toggle-setting id="TogInSong" text="Show During Song" value="InSongValue" apply-on-change="true" />
-    <toggle-setting id="TogInReplay" text="Show During Replay" value="InReplayValue" apply-on-change="true" />
     <toggle-setting id="TogTwelve" text="12/24 Hour Toggle" value="TwelveValue" apply-on-change="true" />
     <toggle-setting id="TogSeconds" text="Show Seconds" value="SecondsValue" apply-on-change="true" />
-    <toggle-setting id="TogBattery" text="Show Headset Battery (ADB)" value="BatteryValue" apply-on-change="true" />
-    <toggle-setting id="TogKillAdb" text="Kill ADB On Exit" value="KillAdbOnExitValue" apply-on-change="true" />
-    <toggle-setting id="TogRainbow" text="Rainbowify it" value="RainbowValue" apply-on-change="true" />
     <increment-setting id="FontSize" text="Font Size" value="FontSizeValue" increment="0.5" min="1" max="20" apply-on-change="true" />
-    <color-setting id="ColorRow" text="Clock Color" value="ClockColorValue" apply-on-change="true" />
-    <color-setting id="FpsColorRow" text="FPS Color" value="FpsColorValue" apply-on-change="true" />
     <increment-setting id="PosX" text="Position X (Left/Right)" value="PosXValue" increment="0.1" min="-10" max="10" apply-on-change="true" />
     <increment-setting id="PosY" text="Position Y (Up/Down)" value="PosYValue" increment="0.1" min="-10" max="10" apply-on-change="true" />
     <increment-setting id="PosZ" text="Position Z (Forward/Back)" value="PosZValue" increment="0.1" min="-10" max="10" apply-on-change="true" />
-    <button id="BtnRefreshBattery" text="Refresh Battery (ADB)" on-click="RefreshBattery" />
+    <button id="BtnRefreshBattery" text="Refresh Battery (ADB)" hover-hint="Clock 4 is fixed to headset battery and hides automatically when unavailable" on-click="RefreshBattery" />
+    <color-setting id="Clock1ColorRow" text="Clock 1 Color" value="Clock1ColorValue" on-change="OnClock1ColorChanged" apply-on-change="true" />
+    <color-setting id="Clock2ColorRow" text="Clock 2 Color" value="Clock2ColorValue" on-change="OnClock2ColorChanged" apply-on-change="true" />
+    <color-setting id="Clock3ColorRow" text="Clock 3 Color" value="Clock3ColorValue" on-change="OnClock3ColorChanged" apply-on-change="true" />
+    <color-setting id="FpsColorRow" text="FPS Color" value="FpsColorValue" apply-on-change="true" />
   </vertical>
 </bg>
